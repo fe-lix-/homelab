@@ -1,0 +1,25 @@
+---
+- name: Restart minecraft
+  community.docker.docker_compose_v2:
+    project_src: "{{ minecraft_data_dir }}"
+    state: restarted
+
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart mc-proxy
+  ansible.builtin.systemd:
+    name: mc-proxy.service
+    state: restarted
+
+- name: Restart mc-fake-server
+  ansible.builtin.systemd:
+    name: mc-fake-server.service
+    state: restarted
+
+- name: Restart mc-whitelist
+  ansible.builtin.systemd:
+    name: mc-whitelist.service
+    state: restarted
+    daemon_reload: true

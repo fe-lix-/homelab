@@ -1,0 +1,4 @@
+---
+- name: Apply netplan
+  ansible.builtin.command: netplan try --timeout 30
+  changed_when: true

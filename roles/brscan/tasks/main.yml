@@ -1,0 +1,118 @@
+---
+- name: Install SANE dependencies
+  ansible.builtin.apt:
+    name:
+      - libsane1
+      - sane-utils
+      - img2pdf
+    state: present
+    update_cache: true
+
+- name: Copy brscan5 deb to server
+  ansible.builtin.copy:
+    src: "{{ brscan5_deb }}"
+    dest: "/tmp/{{ brscan5_deb }}"
+    mode: "0644"
+
+- name: Check if brscan5 is installed
+  ansible.builtin.command:
+    cmd: dpkg -s brscan5
+  register: brscan5_check
+  failed_when: false
+  changed_when: false
+
+- name: Install brscan5
+  ansible.builtin.command:
+    cmd: "dpkg -i /tmp/{{ brscan5_deb }}"
+  when: brscan5_check.rc != 0
+
+- name: Copy brscan-skey deb to server
+  ansible.builtin.copy:
+    src: "{{ brscan_skey_deb }}"
+    dest: "/tmp/{{ brscan_skey_deb }}"
+    mode: "0644"
+
+- name: Check if brscan-skey is installed
+  ansible.builtin.command:
+    cmd: dpkg -s brscan-skey
+  register: brscan_skey_check
+  failed_when: false
+  changed_when: false
+
+# brscan-skey depends on libsane (>= 1.0.11-3) which was renamed to libsane1
+# in Ubuntu 22.04+. libsane1 is already installed above; use --force-depends
+# to satisfy the stale package name metadata without breaking anything.
+- name: Install brscan-skey
+  ansible.builtin.command:
+    cmd: "dpkg --force-depends -i /tmp/{{ brscan_skey_deb }}"
+  when: brscan_skey_check.rc != 0
+
+# brsaneconfig5 registers the scanner IP so the device knows to send UDP
+# button-press packets to this host. brscan-skey uses this registration to
+# contact the scanner and listen for button presses on port 54925.
+- name: Check if scanner already registered with brsaneconfig5
+  ansible.builtin.command:
+    cmd: brsaneconfig5 -q
+  register: brscan_registered
+  changed_when: false
+
+- name: Register scanner with brsaneconfig5
+  ansible.builtin.command:
+    cmd: >-
+      brsaneconfig5 -a
+      name={{ brscan_scanner_name }}
+      model={{ brscan_scanner_model }}
+      ip={{ brscan_scanner_ip }}
+  when: brscan_scanner_name not in brscan_registered.stdout
+
+# Deploy scantofile.sh to the path brscan-skey.config references.
+# The script detaches via setsid so the background scan survives brscan-skey
+# being stopped mid-execution.
+- name: Deploy scantofile.sh
+  ansible.builtin.template:
+    src: scantofile.sh.j2
+    dest: /opt/brother/scanner/brscan-skey/script/scantofile.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart brscan-skey
+
+- name: Deploy scantofile_doublesided.sh
+  ansible.builtin.template:
+    src: scantofile_doublesided.sh.j2
+    dest: /opt/brother/scanner/brscan-skey/script/scantofile_doublesided.sh
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart brscan-skey
+
+- name: Deploy brscan-skey config
+  ansible.builtin.template:
+    src: brscan-skey.config.j2
+    dest: /opt/brother/scanner/brscan-skey/brscan-skey.config
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart brscan-skey
+
+- name: Deploy brscan-skey systemd unit
+  ansible.builtin.template:
+    src: brscan-skey.service.j2
+    dest: /etc/systemd/system/brscan-skey.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart brscan-skey
+
+- name: Allow scanner UDP port through UFW
+  community.general.ufw:
+    rule: allow
+    port: "54925"
+    proto: udp
+
+- name: Enable and start brscan-skey service
+  ansible.builtin.systemd:
+    name: brscan-skey
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,9 @@
+[Unit]
+Description=Run Minecraft idle watcher every 5 minutes
+
+[Timer]
+OnCalendar={{ minecraft_idle_check_schedule }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

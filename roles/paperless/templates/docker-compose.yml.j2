@@ -1,0 +1,54 @@
+---
+services:
+  paperless-redis:
+    image: redis:7-alpine
+    container_name: paperless-redis
+    restart: unless-stopped
+
+  paperless-db:
+    image: postgres:16-alpine
+    container_name: paperless-db
+    restart: unless-stopped
+    volumes:
+      - paperless-db-data:/var/lib/postgresql/data
+    environment:
+      POSTGRES_DB: paperless
+      POSTGRES_USER: paperless
+      POSTGRES_PASSWORD: "{{ paperless_db_password }}"
+
+  paperless-webserver:
+    image: ghcr.io/paperless-ngx/paperless-ngx:{{ paperless_version }}
+    container_name: paperless-webserver
+    restart: unless-stopped
+    depends_on:
+      - paperless-redis
+      - paperless-db
+    ports:
+      - "127.0.0.1:{{ paperless_port }}:8000"
+    volumes:
+      - "{{ paperless_data_dir }}/consume:/usr/src/paperless/consume"
+      - "{{ paperless_media_dir }}:/usr/src/paperless/media"
+      - paperless-data:/usr/src/paperless/data
+    environment:
+      PAPERLESS_REDIS: "redis://paperless-redis:6379"
+      PAPERLESS_DBHOST: paperless-db
+      PAPERLESS_DBUSER: paperless
+      PAPERLESS_DBPASS: "{{ paperless_db_password }}"
+      PAPERLESS_SECRET_KEY: "{{ paperless_secret_key }}"
+      PAPERLESS_TIME_ZONE: "{{ timezone }}"
+      PAPERLESS_OCR_LANGUAGE: deu+eng
+      PAPERLESS_URL: "https://docs.{{ base_domain }}"
+      PAPERLESS_TASK_WORKERS: "2"
+      PAPERLESS_THREADS_PER_WORKER: "1"
+      PAPERLESS_ENABLE_HTTP_REMOTE_USER: "true"
+      PAPERLESS_ENABLE_HTTP_REMOTE_USER_API: "true"
+      PAPERLESS_HTTP_REMOTE_USER_HEADER_NAME: HTTP_REMOTE_USER
+      PAPERLESS_LOGOUT_REDIRECT_URL: "https://auth.{{ base_domain }}/logout"
+      PAPERLESS_CONSUMER_RECURSIVE: "true"
+      PAPERLESS_CONSUMER_ENABLE_COLLATE_DOUBLE_SIDED: "true"
+      USERMAP_UID: "{{ paperless_uid }}"
+      USERMAP_GID: "{{ docs_rw_gid }}"
+
+volumes:
+  paperless-db-data:
+  paperless-data:

@@ -1,0 +1,22 @@
+---
+services:
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:{{ prowlarr_version }}
+    container_name: prowlarr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ prowlarr_port }}:9696"
+    volumes:
+      - "{{ prowlarr_data_dir }}/config:/config"
+    environment:
+      PUID: "{{ prowlarr_uid }}"
+      PGID: "{{ prowlarr_gid }}"
+      TZ: "{{ timezone }}"
+    networks:
+      - default
+      - arr
+
+networks:
+  arr:
+    name: arr
+    external: true

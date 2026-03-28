@@ -1,0 +1,18 @@
+---
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:{{ jellyfin_version }}
+    container_name: jellyfin
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ jellyfin_port }}:8096"
+    volumes:
+      - "{{ jellyfin_data_dir }}/config:/config"
+      - "{{ jellyfin_data_dir }}/cache:/cache"
+      - "{{ jellyfin_media_dir }}:/media"
+    user: "{{ jellyfin_uid }}:{{ jellyfin_gid }}"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "auth.{{ base_domain }}:host-gateway"
+    environment:
+      TZ: "{{ timezone }}"

@@ -1,0 +1,16 @@
+---
+authelia_version: "4.39.16"
+authelia_redis_version: "7.4-alpine"
+authelia_port: 9091
+authelia_data_dir: /opt/authelia
+authelia_jwt_secret: "CHANGE_ME"
+authelia_session_secret: "CHANGE_ME"
+authelia_storage_encryption_key: "CHANGE_ME"
+authelia_default_policy: "one_factor"
+authelia_users: []
+authelia_oidc_hmac_secret: "CHANGE_ME"
+authelia_grafana_oidc_secret: "CHANGE_ME"
+authelia_immich_oidc_secret: "CHANGE_ME"
+authelia_jellyfin_oidc_secret: "CHANGE_ME"
+authelia_komga_oidc_secret: "CHANGE_ME"
+authelia_audiobookshelf_oidc_secret: "CHANGE_ME"

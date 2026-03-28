@@ -1,0 +1,7 @@
+---
+timezone: UTC
+locale: en_US.UTF-8
+common_packages: []
+base_lan_interface: ""
+base_gateway: ""
+wireguard_vpn_subnet: ""

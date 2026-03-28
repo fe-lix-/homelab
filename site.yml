@@ -1,0 +1,74 @@
+---
+- name: Configure homelab server
+  hosts: homelab
+  become: true
+
+  roles:
+    - role: base
+      tags: base
+    - role: users
+      tags: users
+    - role: security
+      tags: security
+    - role: storage
+      tags: storage
+    - role: samba
+      tags: samba
+    - role: docker
+      tags: docker
+    - role: komga
+      tags: komga
+    - role: jellyfin
+      tags: jellyfin
+    - role: qbittorrent
+      tags: qbittorrent
+    - role: sonarr
+      tags: sonarr
+    - role: radarr
+      tags: radarr
+    - role: lidarr
+      tags: lidarr
+    - role: byparr
+      tags: byparr
+    - role: prowlarr
+      tags: prowlarr
+    - role: bazarr
+      tags: bazarr
+    - role: mediathekarr
+      tags: mediathekarr
+    - role: joynarr
+      tags: joynarr
+    - role: uptime-kuma
+      tags: uptime-kuma
+    - role: immich
+      tags: immich
+    - role: audiobookshelf
+      tags: audiobookshelf
+    - role: monitoring
+      tags: monitoring
+    - role: homeassistant
+      tags: homeassistant
+    - role: goploader
+      tags: goploader
+    - role: lldap
+      tags: lldap
+    - role: authelia
+      tags: authelia
+    - role: paperless
+      tags: paperless
+    - role: brscan
+      tags: brscan
+    - role: pihole
+      tags: pihole
+    - role: minecraft
+      tags: minecraft
+    - role: manga-scheduler
+      tags: manga-scheduler
+    - role: certbot
+      tags: certbot
+    - role: nginx
+      tags: nginx
+    - role: homepage
+      tags: homepage
+    - role: backup
+      tags: backup

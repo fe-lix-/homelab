@@ -1,0 +1,10 @@
+# Static routes for WireGuard VPN clients to reach this server.
+# Without this, the server has no route back to 192.168.4.0/24 and
+# drops replies to VPN clients with ICMP host unreachable.
+network:
+  version: 2
+  ethernets:
+    {{ base_lan_interface }}:
+      routes:
+        - to: {{ wireguard_vpn_subnet }}
+          via: {{ base_gateway }}

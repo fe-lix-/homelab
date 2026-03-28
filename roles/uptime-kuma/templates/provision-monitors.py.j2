@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""Provision Uptime Kuma monitors using raw Socket.IO (compatible with 2.x)."""
+import json
+import sys
+import threading
+
+import socketio
+
+sio = socketio.Client()
+existing_monitors = {}
+login_ok = threading.Event()
+login_error = {}
+monitors_received = threading.Event()
+
+
+@sio.on("monitorList")
+def on_monitor_list(data):
+    existing_monitors.update(data)
+    monitors_received.set()
+
+
+sio.connect("{{ uptime_kuma_api_url }}", wait_timeout=10)
+
+
+def on_login(data):
+    if data.get("ok"):
+        login_ok.set()
+    else:
+        login_error["msg"] = data.get("msg", "unknown error")
+        login_ok.set()
+
+
+sio.emit("login", {
+    "username": "{{ uptime_kuma_username }}",
+    "password": "{{ uptime_kuma_password }}",
+    "token": "",
+}, callback=on_login)
+
+if not login_ok.wait(timeout=15):
+    print("Login timed out", file=sys.stderr)
+    sio.disconnect()
+    sys.exit(1)
+
+if login_error:
+    print(f"Login failed: {login_error['msg']}", file=sys.stderr)
+    sio.disconnect()
+    sys.exit(1)
+
+if not monitors_received.wait(timeout=15):
+    print("Monitor list not received", file=sys.stderr)
+    sio.disconnect()
+    sys.exit(1)
+
+existing_names = {m["name"] for m in existing_monitors.values()}
+monitors = json.loads("""{{ uptime_kuma_monitors | to_json }}""")
+
+changed = False
+errors = []
+for monitor in monitors:
+    name = monitor["name"]
+    monitor_type = monitor.get("type", "http")
+
+    if name in existing_names:
+        continue
+
+    add_done = threading.Event()
+    add_result = {}
+
+    def on_add(data, _event=add_done, _result=add_result):
+        _result["data"] = data
+        _event.set()
+
+    if monitor_type == "http":
+        sio.emit("add", {
+            "type": "http",
+            "name": name,
+            "url": monitor["url"],
+            "method": "GET",
+            "interval": 60,
+            "maxretries": 3,
+            "retryInterval": 30,
+            "accepted_statuscodes": monitor.get("accepted_statuscodes", ["200-299"]),
+            "conditions": [],
+        }, callback=on_add)
+    elif monitor_type == "push":
+        sio.emit("add", {
+            "type": "push",
+            "name": name,
+            "interval": 86400,
+            "accepted_statuscodes": ["200-299"],
+            "conditions": [],
+        }, callback=on_add)
+    elif monitor_type == "tcp":
+        sio.emit("add", {
+            "type": "port",
+            "name": name,
+            "hostname": monitor["hostname"],
+            "port": int(monitor["port"]),
+            "interval": 60,
+            "maxretries": 3,
+            "retryInterval": 30,
+            "accepted_statuscodes": ["200-299"],
+            "conditions": [],
+        }, callback=on_add)
+    else:
+        continue
+
+    if add_done.wait(timeout=15):
+        resp = add_result.get("data", {})
+        if isinstance(resp, dict) and resp.get("ok", False):
+            print(f"Added {monitor_type} monitor: {name}")
+            changed = True
+        else:
+            msg = resp.get("msg", repr(resp)) if isinstance(resp, dict) else repr(resp)
+            errors.append(f"Failed to add {name}: {msg}")
+    else:
+        errors.append(f"Timeout adding monitor: {name}")
+
+sio.disconnect()
+
+if errors:
+    for e in errors:
+        print(e, file=sys.stderr)
+    sys.exit(1)
+
+if changed:
+    print("CHANGED")
+else:
+    print("OK")

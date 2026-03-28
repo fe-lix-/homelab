@@ -1,0 +1,6 @@
+---
+- name: Restart brscan-skey
+  ansible.builtin.systemd:
+    name: brscan-skey
+    state: restarted
+    daemon_reload: true

@@ -1,0 +1,6 @@
+---
+jellyfin_version: "10.11.6"
+jellyfin_port: 8096
+jellyfin_data_dir: /opt/jellyfin
+jellyfin_media_dir: /srv/media
+jellyfin_user: svc-media

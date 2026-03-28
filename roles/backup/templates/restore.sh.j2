@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO="${1:-local}"
+ACTION="${2:-}"
+
+case "$REPO" in
+  local) source {{ backup_config_dir }}/restic-env-local ;;
+  b2)    source {{ backup_config_dir }}/restic-env-b2 ;;
+  *)
+    echo "Usage: $0 [local|b2] [snapshots|list SNAPSHOT|restore SNAPSHOT TARGET|restore-db SNAPSHOT]"
+    exit 1
+    ;;
+esac
+
+case "$ACTION" in
+  snapshots)
+    restic snapshots
+    ;;
+  list)
+    SNAPSHOT="${3:?Snapshot ID required}"
+    restic ls "$SNAPSHOT"
+    ;;
+  restore)
+    SNAPSHOT="${3:?Snapshot ID required}"
+    TARGET="${4:?Target path required}"
+    restic restore "$SNAPSHOT" --target "$TARGET"
+    echo "Restored snapshot $SNAPSHOT to $TARGET"
+    ;;
+  restore-db)
+    SNAPSHOT="${3:?Snapshot ID required}"
+    TMPDIR=$(mktemp -d)
+    restic restore "$SNAPSHOT" --target "$TMPDIR" --include "{{ backup_immich_dump_path }}"
+    echo "Restoring Immich database from dump..."
+    docker exec -i immich-db psql -U immich -d immich < "$TMPDIR{{ backup_immich_dump_path }}"
+    rm -rf "$TMPDIR"
+    echo "Database restored successfully."
+    ;;
+  *)
+    echo "Usage: $0 [local|b2] [snapshots|list SNAPSHOT|restore SNAPSHOT TARGET|restore-db SNAPSHOT]"
+    exit 1
+    ;;
+esac

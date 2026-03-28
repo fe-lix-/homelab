@@ -1,0 +1,49 @@
+---
+- name: Look up service account UID/GID for JoynArr
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ joynarr_user }}"
+  register: joynarr_getent
+
+- name: Set JoynArr UID/GID facts
+  ansible.builtin.set_fact:
+    joynarr_uid: "{{ joynarr_getent.ansible_facts.getent_passwd[joynarr_user][1] }}"
+    joynarr_gid: "{{ joynarr_getent.ansible_facts.getent_passwd[joynarr_user][2] }}"
+
+- name: Create JoynArr directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ joynarr_data_dir }}"
+    - "{{ joynarr_data_dir }}/app"
+    - "{{ joynarr_data_dir }}/downloads"
+
+- name: Sync JoynArr source
+  ansible.posix.synchronize:
+    src: "{{ playbook_dir }}/applications/JoynArr/"
+    dest: "{{ joynarr_data_dir }}/app/"
+    delete: true
+    rsync_opts:
+      - "--exclude=node_modules"
+      - "--exclude=dist"
+      - "--exclude=.git"
+      - "--exclude=.env"
+      - "--exclude=docker-compose.yml"
+      - "--exclude=.claude"
+      - "--exclude=downloads"
+  notify: Restart joynarr
+
+- name: Deploy JoynArr docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ joynarr_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart joynarr
+
+- name: Build and start JoynArr
+  community.docker.docker_compose_v2:
+    project_src: "{{ joynarr_data_dir }}"
+    state: present
+    build: always

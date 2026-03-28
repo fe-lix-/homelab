@@ -1,0 +1,58 @@
+---
+uptime_kuma_version: "2.2.1"
+uptime_kuma_port: 3001
+uptime_kuma_data_dir: /opt/uptime-kuma
+uptime_kuma_api_url: "http://127.0.0.1:{{ uptime_kuma_port }}"
+uptime_kuma_username: ""
+uptime_kuma_password: ""
+uptime_kuma_monitors:
+  - name: Homepage
+    url: "http://host-gateway:{{ homepage_port }}"
+  - name: Komga
+    url: "http://host-gateway:{{ komga_port }}"
+  - name: Jellyfin
+    url: "http://host-gateway:{{ jellyfin_port }}"
+  - name: qBittorrent
+    url: "http://host-gateway:{{ qbittorrent_port }}"
+  - name: Sonarr
+    url: "http://host-gateway:{{ sonarr_port }}"
+  - name: Radarr
+    url: "http://host-gateway:{{ radarr_port }}"
+  - name: Lidarr
+    url: "http://host-gateway:{{ lidarr_port }}"
+  - name: Prowlarr
+    url: "http://host-gateway:{{ prowlarr_port }}"
+  - name: Bazarr
+    url: "http://host-gateway:{{ bazarr_port }}"
+  - name: Immich
+    url: "http://host-gateway:{{ immich_port }}"
+  - name: Audiobookshelf
+    url: "http://host-gateway:{{ audiobookshelf_port }}"
+  - name: Grafana
+    url: "http://host-gateway:{{ grafana_port }}"
+  - name: Home Assistant
+    url: "http://host-gateway:{{ homeassistant_port }}"
+  - name: MediathekArr
+    url: "http://host-gateway:{{ mediathekarr_port }}"
+  - name: JoynArr
+    url: "http://host-gateway:{{ joynarr_indexer_port }}"
+  - name: Goploader
+    url: "http://host-gateway:{{ goploader_port }}"
+  - name: Paperless-ngx
+    url: "http://host-gateway:{{ paperless_port }}"
+  - name: LLDAP
+    url: "http://host-gateway:{{ lldap_port }}"
+  - name: Authelia
+    url: "http://host-gateway:{{ authelia_port }}"
+  - name: Pi-hole
+    url: "http://host-gateway:{{ pihole_port }}/admin"
+  - name: UniFi
+    url: "https://{{ base_gateway }}"
+    accepted_statuscodes: ["200-299", "302"]
+  - name: Minecraft
+    type: tcp
+    hostname: "{{ ansible_host }}"
+    port: "{{ minecraft_port }}"
+  - name: Restic Backup
+    type: push
+    push_token: ""

@@ -1,0 +1,113 @@
+---
+- name: Install mdadm and xfsprogs
+  ansible.builtin.package:
+    name: [mdadm, xfsprogs]
+    state: present
+
+- name: Ensure /srv mount point exists
+  ansible.builtin.file:
+    path: /srv
+    state: directory
+    mode: "0755"
+
+- name: Ensure /srv is in fstab and mounted
+  ansible.posix.mount:
+    path: /srv
+    src: "UUID={{ storage_srv_uuid }}"
+    fstype: xfs
+    opts: defaults,nofail
+    state: mounted
+  when: storage_srv_uuid != ""
+
+# --- /srv subdirectory ownership and modes ---
+# Setgid (2xxx) ensures new files inherit the group so cross-service access works.
+# These tasks are idempotent — they only change mode/owner if already wrong.
+
+- name: Ensure /srv/media ownership and setgid mode
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: svc-arr
+    group: media-rw
+    mode: "2775"
+  loop:
+    - /srv/media
+    - /srv/media/tv
+    - /srv/media/movies
+    - /srv/media/music
+
+- name: Ensure /srv/media/audiobooks ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/media/audiobooks
+    state: directory
+    owner: svc-media
+    group: media-rw
+    mode: "2775"
+
+- name: Ensure /srv/downloads ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/downloads
+    state: directory
+    owner: svc-arr
+    group: media-rw
+    mode: "2775"
+
+- name: Ensure /srv/downloads subdirectories ownership and setgid mode
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: svc-arr
+    group: media-rw
+    mode: "2775"
+  loop:
+    - /srv/downloads/torrents
+    - /srv/downloads/usenet
+    - /srv/downloads/mediathekarr
+
+- name: Ensure /srv/comics ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/comics
+    state: directory
+    owner: svc-media
+    group: comics-rw
+    mode: "2775"
+
+- name: Ensure /srv/uploads/mangas ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/uploads/mangas
+    state: directory
+    owner: smbguest
+    group: comics-rw
+    mode: "2775"
+
+- name: Ensure /srv/photos ownership and mode
+  ansible.builtin.file:
+    path: /srv/photos
+    state: directory
+    owner: svc-immich
+    group: photos-rw
+    mode: "0750"
+
+- name: Ensure /srv/paperless ownership and mode
+  ansible.builtin.file:
+    path: /srv/paperless
+    state: directory
+    owner: svc-paperless
+    group: docs-rw
+    mode: "0750"
+
+# --- One-time ownership migration ---
+# Run with: make deploy-role ROLE=storage -e migrate_srv_ownership=true
+# This recursively re-chowns existing files to the new service accounts.
+# Skip on subsequent runs (flag defaults to false).
+
+- name: Migrate /srv ownership (one-time, run with -e migrate_srv_ownership=true)
+  ansible.builtin.command: "chown -R {{ item.owner }}:{{ item.group }} {{ item.path }}"
+  loop:
+    - { path: /srv/media,      owner: svc-arr,       group: media-rw }
+    - { path: /srv/downloads,  owner: svc-arr,       group: media-rw }
+    - { path: /srv/comics,     owner: svc-media,     group: comics-rw }
+    - { path: /srv/photos,     owner: svc-immich,    group: photos-rw }
+    - { path: /srv/paperless,  owner: svc-paperless, group: docs-rw }
+  when: migrate_srv_ownership | default(false)
+  changed_when: true

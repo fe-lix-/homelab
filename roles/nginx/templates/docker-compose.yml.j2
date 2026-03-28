@@ -1,0 +1,16 @@
+---
+services:
+  nginx:
+    image: nginx:{{ nginx_version }}
+    container_name: nginx
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - "{{ nginx_data_dir }}/conf.d:/etc/nginx/conf.d:ro"
+      - "{{ nginx_data_dir }}/403.html:/usr/share/nginx/html/403.html:ro"
+      - "{{ nginx_data_dir }}/landing.html:/usr/share/nginx/html/landing.html:ro"
+      - "{{ nginx_data_dir }}/mc-forbidden.html:/usr/share/nginx/html/mc-forbidden.html:ro"
+      - "{{ nginx_data_dir }}/favicon.svg:/usr/share/nginx/html/favicon.svg:ro"
+      - "/etc/letsencrypt:/etc/letsencrypt:ro"
+    environment:
+      TZ: "{{ timezone }}"

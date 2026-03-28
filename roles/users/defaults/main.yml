@@ -1,0 +1,22 @@
+---
+# Service account UIDs/GIDs (2000–2999)
+# Explicit UIDs/GIDs for reproducibility — same values on every provision
+svc_arr_uid: 2001
+svc_arr_gid: 2001
+svc_media_uid: 2002
+svc_media_gid: 2002
+svc_immich_uid: 2003
+svc_immich_gid: 2003
+svc_paperless_uid: 2004
+svc_paperless_gid: 2004
+svc_pihole_uid: 2005
+svc_pihole_gid: 2005
+svc_minecraft_uid: 2006
+svc_minecraft_gid: 2006
+
+# Shared data group GIDs (3000–3999)
+# Used for /srv subdirectory ownership and setgid enforcement
+media_rw_gid: 3001
+comics_rw_gid: 3002
+photos_rw_gid: 3003
+docs_rw_gid: 3004

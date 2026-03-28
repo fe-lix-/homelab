@@ -1,0 +1,8 @@
+---
+pihole_version: "2024.07.0"
+pihole_port: 8053
+pihole_data_dir: /opt/pihole
+pihole_user: svc-pihole
+pihole_admin_password: "CHANGE_ME"
+pihole_upstream_dns1: "1.1.1.1"
+pihole_upstream_dns2: "8.8.8.8"

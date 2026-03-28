@@ -1,0 +1,14 @@
+---
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:{{ uptime_kuma_version }}
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ uptime_kuma_port }}:3001"
+    volumes:
+      - "{{ uptime_kuma_data_dir }}/data:/app/data"
+    extra_hosts:
+      - "host-gateway:host-gateway"
+    environment:
+      TZ: "{{ timezone }}"

@@ -1,0 +1,13 @@
+---
+services:
+  goploader:
+    image: ghcr.io/depado/goploader:{{ goploader_version }}
+    container_name: goploader
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ goploader_port }}:8080"
+    volumes:
+      - "{{ goploader_data_dir }}/config/conf.yml:/app/conf.yml:ro"
+      - "{{ goploader_data_dir }}/data:/data"
+    environment:
+      TZ: "{{ timezone }}"

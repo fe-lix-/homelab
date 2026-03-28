@@ -1,0 +1,18 @@
+---
+services:
+  byparr:
+    image: ghcr.io/thephaseless/byparr:{{ byparr_version }}
+    container_name: byparr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ byparr_port }}:8191"
+    environment:
+      TZ: "{{ timezone }}"
+    networks:
+      - default
+      - arr
+
+networks:
+  arr:
+    name: arr
+    external: true

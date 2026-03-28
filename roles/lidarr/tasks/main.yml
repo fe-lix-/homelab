@@ -1,0 +1,46 @@
+---
+- name: Look up lidarr user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ lidarr_user }}"
+
+- name: Set lidarr uid/gid facts
+  ansible.builtin.set_fact:
+    lidarr_uid: "{{ ansible_facts['getent_passwd'][lidarr_user][1] }}"
+    lidarr_gid: "{{ ansible_facts['getent_passwd'][lidarr_user][2] }}"
+
+- name: Create Lidarr directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ lidarr_user }}"
+    mode: "0755"
+  loop:
+    - "{{ lidarr_data_dir }}"
+    - "{{ lidarr_data_dir }}/config"
+
+- name: Deploy Lidarr docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ lidarr_data_dir }}/docker-compose.yml"
+    owner: "{{ lidarr_user }}"
+    mode: "0644"
+  notify: Restart lidarr
+
+- name: Start Lidarr
+  community.docker.docker_compose_v2:
+    project_src: "{{ lidarr_data_dir }}"
+    state: present
+
+- name: Wait for Lidarr config file
+  ansible.builtin.wait_for:
+    path: "{{ lidarr_data_dir }}/config/config.xml"
+    state: present
+    timeout: 30
+
+- name: Disable Lidarr native auth (handled by Authelia)
+  ansible.builtin.lineinfile:
+    path: "{{ lidarr_data_dir }}/config/config.xml"
+    regexp: "<AuthenticationMethod>.*</AuthenticationMethod>"
+    line: "  <AuthenticationMethod>External</AuthenticationMethod>"
+  notify: Restart lidarr

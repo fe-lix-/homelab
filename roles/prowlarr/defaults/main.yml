@@ -1,0 +1,5 @@
+---
+prowlarr_version: "2.3.0"
+prowlarr_port: 9696
+prowlarr_data_dir: /opt/prowlarr
+prowlarr_user: svc-arr

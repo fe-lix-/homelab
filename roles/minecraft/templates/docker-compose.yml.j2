@@ -1,0 +1,22 @@
+---
+services:
+  minecraft:
+    image: itzg/minecraft-server:{{ minecraft_image_tag }}
+    container_name: minecraft
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ minecraft_internal_port }}:25565/tcp"
+    volumes:
+      - "{{ minecraft_data_dir }}/data:/data"
+    environment:
+      EULA: "TRUE"
+      TYPE: "{{ minecraft_type }}"
+      VERSION: "{{ minecraft_version }}"
+      ONLINE_MODE: "{{ minecraft_online_mode }}"
+      MEMORY: "{{ minecraft_memory }}"
+      TZ: "{{ timezone }}"
+      UID: "{{ minecraft_uid }}"
+      GID: "{{ minecraft_gid }}"
+      ENABLE_RCON: "true"
+      RCON_PASSWORD: "{{ minecraft_rcon_password }}"
+      RCON_PORT: "{{ minecraft_rcon_port }}"

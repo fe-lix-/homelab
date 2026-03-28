@@ -1,0 +1,10 @@
+[Unit]
+Description=Restic backup
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ backup_config_dir }}/backup.sh
+Nice=19
+IOSchedulingClass=idle

@@ -1,0 +1,12 @@
+---
+samba_rw_group: samba-rw
+samba_ro_group: samba-ro
+samba_guest_user: smbguest
+samba_upload_dir: /srv/uploads
+samba_share_path: /srv
+samba_users: []
+# samba_users:
+#   - name: YOUR_USERNAME
+#     password: "changeme"
+#     groups:
+#       - samba-rw

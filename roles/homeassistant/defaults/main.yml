@@ -1,0 +1,4 @@
+---
+homeassistant_version: "2026.3.1"
+homeassistant_port: 8123
+homeassistant_data_dir: /opt/homeassistant

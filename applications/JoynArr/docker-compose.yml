@@ -1,0 +1,14 @@
+services:
+  joyn-arr:
+    build: .
+    ports:
+      - "5007:5007"
+      - "5008:5008"
+    volumes:
+      - ./downloads:/app/downloads
+      - ./ffmpeg:/app/ffmpeg
+    environment:
+      - TZ=Europe/Berlin
+      - DOWNLOAD_FOLDER_PATH_MAPPING=/downloads/completed
+    env_file:
+      - .env

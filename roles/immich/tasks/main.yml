@@ -1,0 +1,32 @@
+---
+- name: Look up immich user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ immich_user }}"
+
+- name: Set immich uid/gid facts
+  ansible.builtin.set_fact:
+    immich_uid: "{{ ansible_facts['getent_passwd'][immich_user][1] }}"
+    immich_gid: "{{ ansible_facts['getent_passwd'][immich_user][2] }}"
+
+- name: Create Immich directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ immich_user }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ immich_data_dir }}",   mode: "0750" }
+
+- name: Deploy Immich docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ immich_data_dir }}/docker-compose.yml"
+    owner: "{{ immich_user }}"
+    mode: "0644"
+  notify: Restart immich
+
+- name: Start Immich
+  community.docker.docker_compose_v2:
+    project_src: "{{ immich_data_dir }}"
+    state: present

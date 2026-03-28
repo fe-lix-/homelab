@@ -1,0 +1,5 @@
+---
+- name: Restart sonarr
+  community.docker.docker_compose_v2:
+    project_src: "{{ sonarr_data_dir }}"
+    state: restarted

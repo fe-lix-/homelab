@@ -1,0 +1,16 @@
+---
+services:
+  komga:
+    image: gotson/komga:{{ komga_version }}
+    container_name: komga
+    restart: unless-stopped
+    extra_hosts:
+      - "auth.{{ base_domain }}:host-gateway"
+    ports:
+      - "127.0.0.1:{{ komga_port }}:25600"
+    volumes:
+      - "{{ komga_data_dir }}/config:/config"
+      - "{{ komga_library_dir }}:/data"
+    user: "{{ komga_uid }}:{{ komga_gid }}"
+    environment:
+      TZ: "{{ timezone }}"

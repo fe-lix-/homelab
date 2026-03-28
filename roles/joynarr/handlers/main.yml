@@ -1,0 +1,6 @@
+---
+- name: Restart joynarr
+  community.docker.docker_compose_v2:
+    project_src: "{{ joynarr_data_dir }}"
+    state: restarted
+    build: always

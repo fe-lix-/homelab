@@ -1,0 +1,33 @@
+---
+- name: Look up sabnzbd user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ sabnzbd_user }}"
+
+- name: Set sabnzbd uid/gid facts
+  ansible.builtin.set_fact:
+    sabnzbd_uid: "{{ ansible_facts['getent_passwd'][sabnzbd_user][1] }}"
+    sabnzbd_gid: "{{ ansible_facts['getent_passwd'][sabnzbd_user][2] }}"
+
+- name: Create SABnzbd directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ sabnzbd_user }}"
+    mode: "0755"
+  loop:
+    - "{{ sabnzbd_data_dir }}"
+    - "{{ sabnzbd_data_dir }}/config"
+
+- name: Deploy SABnzbd docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ sabnzbd_data_dir }}/docker-compose.yml"
+    owner: "{{ sabnzbd_user }}"
+    mode: "0644"
+  notify: Restart sabnzbd
+
+- name: Start SABnzbd
+  community.docker.docker_compose_v2:
+    project_src: "{{ sabnzbd_data_dir }}"
+    state: present

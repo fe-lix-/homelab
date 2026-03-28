@@ -1,0 +1,24 @@
+---
+services:
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:{{ qbittorrent_version }}
+    container_name: qbittorrent
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ qbittorrent_port }}:8080"
+    volumes:
+      - "{{ qbittorrent_data_dir }}/config:/config"
+      - "{{ qbittorrent_downloads_dir }}:/downloads"
+    environment:
+      PUID: "{{ qbittorrent_uid }}"
+      PGID: "{{ qbittorrent_gid }}"
+      TZ: "{{ timezone }}"
+      WEBUI_PORT: "8080"
+    networks:
+      - default
+      - arr
+
+networks:
+  arr:
+    name: arr
+    external: true

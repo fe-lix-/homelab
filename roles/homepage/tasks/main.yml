@@ -1,0 +1,34 @@
+---
+- name: Create Homepage directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ homepage_data_dir }}"
+    - "{{ homepage_data_dir }}/config"
+
+- name: Deploy Homepage docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ homepage_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart homepage
+
+- name: Deploy Homepage configuration files
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ homepage_data_dir }}/config/{{ item }}"
+    mode: "0644"
+  loop:
+    - services.yaml
+    - settings.yaml
+    - widgets.yaml
+    - bookmarks.yaml
+    - custom.css
+  notify: Restart homepage
+
+- name: Start Homepage
+  community.docker.docker_compose_v2:
+    project_src: "{{ homepage_data_dir }}"
+    state: present

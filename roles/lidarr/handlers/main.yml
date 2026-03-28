@@ -1,0 +1,5 @@
+---
+- name: Restart lidarr
+  community.docker.docker_compose_v2:
+    project_src: "{{ lidarr_data_dir }}"
+    state: restarted

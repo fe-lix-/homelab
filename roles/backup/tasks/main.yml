@@ -1,0 +1,96 @@
+---
+- name: Install restic
+  ansible.builtin.apt:
+    name: restic
+    state: present
+
+- name: Create backup directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    mode: "0700"
+  loop:
+    - "{{ backup_config_dir }}"
+    - "{{ backup_local_repo }}"
+
+- name: Deploy local restic env file
+  ansible.builtin.template:
+    src: restic-env-local.j2
+    dest: "{{ backup_config_dir }}/restic-env-local"
+    owner: root
+    mode: "0600"
+
+- name: Deploy B2 restic env file
+  ansible.builtin.template:
+    src: restic-env-b2.j2
+    dest: "{{ backup_config_dir }}/restic-env-b2"
+    owner: root
+    mode: "0600"
+
+- name: Check if local restic repository exists
+  ansible.builtin.stat:
+    path: "{{ backup_local_repo }}/config"
+  register: restic_local_config
+
+- name: Initialize local restic repository
+  ansible.builtin.command:
+    cmd: restic init --repo {{ backup_local_repo }}
+  environment:
+    RESTIC_PASSWORD: "{{ backup_restic_password }}"
+  when: not restic_local_config.stat.exists
+  no_log: true
+
+- name: Initialize B2 restic repository
+  ansible.builtin.command:
+    cmd: restic init --repo b2:{{ backup_b2_bucket }}
+  environment:
+    RESTIC_PASSWORD: "{{ backup_restic_password }}"
+    B2_ACCOUNT_ID: "{{ backup_b2_account_id }}"
+    B2_ACCOUNT_KEY: "{{ backup_b2_account_key }}"
+  register: restic_b2_init
+  changed_when: "'created restic repository' in restic_b2_init.stdout"
+  failed_when:
+    - restic_b2_init.rc != 0
+    - "'already initialized' not in restic_b2_init.stderr"
+  when: backup_b2_account_id | length > 0
+  no_log: true
+
+- name: Deploy backup script
+  ansible.builtin.template:
+    src: backup.sh.j2
+    dest: "{{ backup_config_dir }}/backup.sh"
+    owner: root
+    mode: "0700"
+
+- name: Deploy restore script
+  ansible.builtin.template:
+    src: restore.sh.j2
+    dest: "{{ backup_config_dir }}/restore.sh"
+    owner: root
+    mode: "0700"
+
+- name: Deploy restic-backup systemd service
+  ansible.builtin.template:
+    src: restic-backup.service.j2
+    dest: /etc/systemd/system/restic-backup.service
+    owner: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy restic-backup systemd timer
+  ansible.builtin.template:
+    src: restic-backup.timer.j2
+    dest: /etc/systemd/system/restic-backup.timer
+    owner: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start restic-backup timer
+  ansible.builtin.systemd:
+    name: restic-backup.timer
+    enabled: true
+    state: started

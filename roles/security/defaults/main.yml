@@ -1,0 +1,5 @@
+---
+ssh_port: 22
+ssh_permit_root_login: "no"
+ssh_password_authentication: "no"
+minecraft_port: 25565

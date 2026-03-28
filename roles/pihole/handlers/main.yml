@@ -1,0 +1,10 @@
+---
+- name: Restart systemd-resolved
+  ansible.builtin.systemd:
+    name: systemd-resolved
+    state: restarted
+
+- name: Restart pihole
+  community.docker.docker_compose_v2:
+    project_src: "{{ pihole_data_dir }}"
+    state: restarted

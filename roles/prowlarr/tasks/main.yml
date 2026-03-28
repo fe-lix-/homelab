@@ -1,0 +1,46 @@
+---
+- name: Look up prowlarr user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ prowlarr_user }}"
+
+- name: Set prowlarr uid/gid facts
+  ansible.builtin.set_fact:
+    prowlarr_uid: "{{ ansible_facts['getent_passwd'][prowlarr_user][1] }}"
+    prowlarr_gid: "{{ ansible_facts['getent_passwd'][prowlarr_user][2] }}"
+
+- name: Create Prowlarr directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ prowlarr_user }}"
+    mode: "0755"
+  loop:
+    - "{{ prowlarr_data_dir }}"
+    - "{{ prowlarr_data_dir }}/config"
+
+- name: Deploy Prowlarr docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ prowlarr_data_dir }}/docker-compose.yml"
+    owner: "{{ prowlarr_user }}"
+    mode: "0644"
+  notify: Restart prowlarr
+
+- name: Start Prowlarr
+  community.docker.docker_compose_v2:
+    project_src: "{{ prowlarr_data_dir }}"
+    state: present
+
+- name: Wait for Prowlarr config file
+  ansible.builtin.wait_for:
+    path: "{{ prowlarr_data_dir }}/config/config.xml"
+    state: present
+    timeout: 30
+
+- name: Disable Prowlarr native auth (handled by Authelia)
+  ansible.builtin.lineinfile:
+    path: "{{ prowlarr_data_dir }}/config/config.xml"
+    regexp: "<AuthenticationMethod>.*</AuthenticationMethod>"
+    line: "  <AuthenticationMethod>External</AuthenticationMethod>"
+  notify: Restart prowlarr

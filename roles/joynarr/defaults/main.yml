@@ -1,0 +1,14 @@
+---
+joynarr_data_dir: /opt/joynarr
+joynarr_indexer_port: 5008
+joynarr_downloader_port: 5009
+joynarr_downloads_dir: /srv/downloads
+
+# TVDB proxy base URL - must expose GET /shows/{tvdbid} returning show metadata
+# Required for Sonarr TVDB ID → Joyn show name resolution
+joynarr_tvdb_api_base_url: ""
+
+# German IP proxy URL (socks5:// or http://) - required for Joyn authentication
+# Set in vault: joynarr_sock5_proxy_url
+joynarr_sock5_proxy_url: ""
+joynarr_user: svc-arr

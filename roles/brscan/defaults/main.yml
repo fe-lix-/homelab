@@ -1,0 +1,9 @@
+---
+brscan5_deb: "brscan5-1.5.1-0.amd64.deb"
+brscan_skey_deb: "brscan-skey-0.3.4-0.amd64.deb"
+brscan_scanner_name: Scanner
+brscan_scanner_model: MFC-L2800DW
+brscan_scanner_ip: "YOUR_SCANNER_IP"
+brscan_sane_device: "escl:http://YOUR_SCANNER_IP:80/eSCL"
+brscan_brother5_device: "brother5:net1;dev0"
+brscan_consume_dir: /opt/paperless/consume

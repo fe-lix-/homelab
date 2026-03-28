@@ -1,0 +1,6 @@
+---
+nginx_version: "1.28.2"
+nginx_data_dir: /opt/nginx
+nginx_port: 443
+nginx_ssl_cert: /etc/letsencrypt/live/{{ base_domain }}/fullchain.pem
+nginx_ssl_key: /etc/letsencrypt/live/{{ base_domain }}/privkey.pem

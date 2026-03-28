@@ -1,0 +1,6 @@
+---
+sabnzbd_version: "4.5.5"
+sabnzbd_port: 8080
+sabnzbd_data_dir: /opt/sabnzbd
+sabnzbd_downloads_dir: /srv/downloads/usenet
+sabnzbd_user: svc-arr

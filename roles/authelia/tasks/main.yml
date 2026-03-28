@@ -1,0 +1,65 @@
+---
+- name: Create Authelia directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ authelia_data_dir }}"
+    - "{{ authelia_data_dir }}/config"
+    - "{{ authelia_data_dir }}/data"
+
+- name: Check if OIDC signing key exists
+  ansible.builtin.stat:
+    path: "{{ authelia_data_dir }}/config/oidc.pem"
+  register: oidc_key_stat
+
+- name: Generate OIDC signing key
+  ansible.builtin.command:
+    cmd: openssl genrsa 4096
+  register: oidc_key_gen
+  when: not oidc_key_stat.stat.exists
+  no_log: true
+
+- name: Save OIDC signing key
+  ansible.builtin.copy:
+    content: "{{ oidc_key_gen.stdout }}\n"
+    dest: "{{ authelia_data_dir }}/config/oidc.pem"
+    mode: "0600"
+  when: not oidc_key_stat.stat.exists
+  no_log: true
+
+- name: Read OIDC signing key
+  ansible.builtin.slurp:
+    src: "{{ authelia_data_dir }}/config/oidc.pem"
+  register: oidc_key_content
+  no_log: true
+
+- name: Deploy Authelia configuration
+  ansible.builtin.template:
+    src: configuration.yml.j2
+    dest: "{{ authelia_data_dir }}/config/configuration.yml"
+    mode: "0600"
+  no_log: true
+  notify: Restart authelia
+
+- name: Deploy Authelia users database
+  ansible.builtin.template:
+    src: users_database.yml.j2
+    dest: "{{ authelia_data_dir }}/config/users_database.yml"
+    mode: "0600"
+  no_log: true
+  notify: Restart authelia
+
+- name: Deploy Authelia docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ authelia_data_dir }}/docker-compose.yml"
+    mode: "0600"
+  no_log: true
+  notify: Restart authelia
+
+- name: Start Authelia stack
+  community.docker.docker_compose_v2:
+    project_src: "{{ authelia_data_dir }}"
+    state: present

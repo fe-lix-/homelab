@@ -1,0 +1,52 @@
+---
+- name: Disable systemd-resolved DNS stub listener
+  ansible.builtin.lineinfile:
+    path: /etc/systemd/resolved.conf
+    regexp: '^#?DNSStubListener='
+    line: 'DNSStubListener=no'
+  notify: Restart systemd-resolved
+
+- name: Point resolv.conf to systemd-resolved full resolver
+  ansible.builtin.file:
+    src: /run/systemd/resolve/resolv.conf
+    dest: /etc/resolv.conf
+    state: link
+    force: true
+
+- name: Flush handlers to restart systemd-resolved before starting Pi-hole
+  ansible.builtin.meta: flush_handlers
+
+- name: Look up pihole user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ pihole_user }}"
+
+- name: Set pihole uid/gid facts
+  ansible.builtin.set_fact:
+    pihole_uid: "{{ ansible_facts['getent_passwd'][pihole_user][1] }}"
+    pihole_gid: "{{ ansible_facts['getent_passwd'][pihole_user][2] }}"
+
+- name: Create Pi-hole directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ pihole_data_dir }}",                   owner: root,              mode: "0755" }
+    - { path: "{{ pihole_data_dir }}/config",            owner: root,              mode: "0755" }
+    - { path: "{{ pihole_data_dir }}/config/dnsmasq.d",  owner: root,              mode: "0755" }
+    - { path: "{{ pihole_data_dir }}/config/pihole",     owner: "{{ pihole_user }}", mode: "0775" }
+
+- name: Deploy Pi-hole docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ pihole_data_dir }}/docker-compose.yml"
+    owner: root
+    mode: "0644"
+  notify: Restart pihole
+
+- name: Start Pi-hole
+  community.docker.docker_compose_v2:
+    project_src: "{{ pihole_data_dir }}"
+    state: present

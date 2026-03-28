@@ -1,0 +1,5 @@
+---
+homepage_version: "v1.10.1"
+homepage_port: 3000
+homepage_data_dir: /opt/homepage
+homepage_allowed_hosts: "{{ base_domain }},homepage.{{ base_domain }},{{ ansible_host }}:{{ homepage_port }},localhost:{{ homepage_port }}"

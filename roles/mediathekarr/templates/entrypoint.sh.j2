@@ -1,0 +1,19 @@
+#!/bin/bash
+set -euo pipefail
+
+echo "[entrypoint] Configuring VLAN routing via {{ mediathekarr_vlan_gateway }}..."
+
+if ip route del default 2>/dev/null; then
+    echo "[entrypoint] Removed existing default route."
+else
+    echo "[entrypoint] No existing default route to remove."
+fi
+
+ip route add default via {{ mediathekarr_vlan_gateway }}
+echo "[entrypoint] Default route set to {{ mediathekarr_vlan_gateway }}."
+
+echo "[entrypoint] Verifying route..."
+ip route show default
+
+echo "[entrypoint] Starting MediathekArr..."
+exec /app/docker_start.sh

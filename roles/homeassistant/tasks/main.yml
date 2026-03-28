@@ -1,0 +1,42 @@
+---
+- name: Create Home Assistant directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ homeassistant_data_dir }}"
+    - "{{ homeassistant_data_dir }}/config"
+    - "{{ homeassistant_data_dir }}/patches"
+
+- name: Deploy patched aiopvpc pvpc_tariff.py (adds missing 2026 holiday data)
+  ansible.builtin.copy:
+    src: aiopvpc_pvpc_tariff.py
+    dest: "{{ homeassistant_data_dir }}/patches/pvpc_tariff.py"
+    mode: "0644"
+  notify: Restart homeassistant
+
+- name: Configure Home Assistant to trust nginx reverse proxy
+  ansible.builtin.blockinfile:
+    path: "{{ homeassistant_data_dir }}/config/configuration.yaml"
+    marker: "# {mark} ANSIBLE MANAGED - reverse proxy"
+    block: |
+      http:
+        use_x_forwarded_for: true
+        trusted_proxies:
+          - 127.0.0.1
+    create: true
+    mode: "0644"
+  notify: Restart homeassistant
+
+- name: Deploy Home Assistant docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ homeassistant_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart homeassistant
+
+- name: Start Home Assistant
+  community.docker.docker_compose_v2:
+    project_src: "{{ homeassistant_data_dir }}"
+    state: present

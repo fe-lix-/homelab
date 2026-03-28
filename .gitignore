@@ -1,0 +1,11 @@
+*.retry
+.env
+inventories/
+.vault_pass
+*.pyc
+__pycache__/
+.venv/
+.claude/
+.claude
+CLAUDE.md
+HARDWARE.md

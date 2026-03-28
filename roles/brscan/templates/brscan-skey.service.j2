@@ -1,0 +1,14 @@
+[Unit]
+Description=Brother brscan-skey scanner button daemon
+After=network.target
+
+[Service]
+Type=simple
+ExecStartPre=-/bin/rm -f /tmp/brother_lockfile_saneskey_jhsga2shuioahja9kaf3dfsfdlsdfjbgfkj
+ExecStart=/opt/brother/scanner/brscan-skey/brscan-skey-exe
+Restart=always
+RestartSec=30
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

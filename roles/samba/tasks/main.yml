@@ -1,0 +1,66 @@
+---
+- name: Install Samba
+  ansible.builtin.apt:
+    name: samba
+    state: present
+
+- name: Create Samba groups
+  ansible.builtin.group:
+    name: "{{ item }}"
+    state: present
+  loop:
+    - "{{ samba_rw_group }}"
+    - "{{ samba_ro_group }}"
+
+- name: Create guest user
+  ansible.builtin.user:
+    name: "{{ samba_guest_user }}"
+    shell: /usr/sbin/nologin
+    create_home: false
+    system: true
+
+- name: Add Samba users to their groups
+  ansible.builtin.user:
+    name: "{{ item.0.name }}"
+    groups: "{{ item.1 }}"
+    append: true
+  loop: "{{ samba_users | subelements('groups') }}"
+  loop_control:
+    label: "{{ item.0.name }} → {{ item.1 }}"
+
+- name: Set Samba passwords
+  ansible.builtin.shell:
+    cmd: "printf '%s\n%s\n' '{{ item.password }}' '{{ item.password }}' | smbpasswd -s -a {{ item.name }}"
+  loop: "{{ samba_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+  changed_when: false
+  no_log: true
+
+- name: Create upload directory
+  ansible.builtin.file:
+    path: "{{ samba_upload_dir }}"
+    state: directory
+    owner: "{{ samba_guest_user }}"
+    group: "{{ samba_rw_group }}"
+    mode: "1777"
+
+- name: Deploy Samba configuration
+  ansible.builtin.template:
+    src: smb.conf.j2
+    dest: /etc/samba/smb.conf
+    owner: root
+    mode: "0644"
+    validate: testparm -s %s
+  notify: Restart samba
+
+- name: Allow Samba through UFW
+  community.general.ufw:
+    rule: allow
+    name: Samba
+
+- name: Enable and start Samba
+  ansible.builtin.systemd:
+    name: smbd
+    enabled: true
+    state: started

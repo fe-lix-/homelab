@@ -1,0 +1,57 @@
+---
+- name: Set timezone
+  community.general.timezone:
+    name: "{{ timezone }}"
+
+- name: Set locale
+  ansible.builtin.locale_gen:
+    name: "{{ locale }}"
+    state: present
+
+- name: Update apt cache
+  ansible.builtin.apt:
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Upgrade all packages
+  ansible.builtin.apt:
+    upgrade: safe
+
+- name: Install common packages
+  ansible.builtin.apt:
+    name: "{{ common_packages }}"
+    state: present
+
+- name: Enable unattended upgrades
+  ansible.builtin.apt:
+    name: unattended-upgrades
+    state: present
+
+- name: Remove unused dependencies
+  ansible.builtin.apt:
+    autoremove: true
+
+- name: Set authorized SSH keys
+  ansible.posix.authorized_key:
+    user: "{{ item.0.key }}"
+    key: "{{ item.1 }}"
+    state: present
+  loop: "{{ ssh_authorized_keys | dict2items | subelements('value') }}"
+  loop_control:
+    label: "{{ item.0.key }} - {{ item.1[:40] }}..."
+
+- name: Deploy VPN static route via netplan
+  ansible.builtin.template:
+    src: 99-vpn-routes.yaml.j2
+    dest: /etc/netplan/99-vpn-routes.yaml
+    owner: root
+    group: root
+    mode: "0600"
+  notify: Apply netplan
+
+- name: Extend ubuntu-lv to use all free space
+  community.general.lvol:
+    vg: ubuntu-vg
+    lv: ubuntu-lv
+    size: +100%FREE
+    resizefs: true

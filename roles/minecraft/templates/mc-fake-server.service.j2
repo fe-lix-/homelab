@@ -1,0 +1,15 @@
+[Unit]
+Description=Minecraft fake server (shows start message, triggers real server on connect)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {{ minecraft_data_dir }}/mc-fake-server.py
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mc-fake-server
+
+[Install]
+WantedBy=multi-user.target

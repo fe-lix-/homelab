@@ -1,0 +1,7 @@
+---
+radarr_version: "6.0.4"
+radarr_port: 7878
+radarr_data_dir: /opt/radarr
+radarr_media_dir: /srv/media/movies
+radarr_downloads_dir: /srv/downloads
+radarr_user: svc-arr

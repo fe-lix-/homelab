@@ -1,0 +1,152 @@
+---
+# --- Primary service account groups ---
+# Each service account gets its own primary group with a matching GID.
+# These are separate from the shared data groups below so that
+# per-service /opt/<service> directories can be owned by only that account.
+
+- name: Create primary group for svc-arr
+  ansible.builtin.group:
+    name: svc-arr
+    gid: "{{ svc_arr_gid }}"
+    state: present
+
+- name: Create primary group for svc-media
+  ansible.builtin.group:
+    name: svc-media
+    gid: "{{ svc_media_gid }}"
+    state: present
+
+- name: Create primary group for svc-immich
+  ansible.builtin.group:
+    name: svc-immich
+    gid: "{{ svc_immich_gid }}"
+    state: present
+
+- name: Create primary group for svc-paperless
+  ansible.builtin.group:
+    name: svc-paperless
+    gid: "{{ svc_paperless_gid }}"
+    state: present
+
+# --- Shared data groups ---
+# Setgid is applied to /srv subdirectories with these groups so that
+# files created by any member inherit the group, enabling cross-service access.
+
+- name: Create shared data group media-rw
+  ansible.builtin.group:
+    name: media-rw
+    gid: "{{ media_rw_gid }}"
+    state: present
+
+- name: Create shared data group comics-rw
+  ansible.builtin.group:
+    name: comics-rw
+    gid: "{{ comics_rw_gid }}"
+    state: present
+
+- name: Create shared data group photos-rw
+  ansible.builtin.group:
+    name: photos-rw
+    gid: "{{ photos_rw_gid }}"
+    state: present
+
+- name: Create shared data group docs-rw
+  ansible.builtin.group:
+    name: docs-rw
+    gid: "{{ docs_rw_gid }}"
+    state: present
+
+# --- Service accounts ---
+# Non-login, no home directory. System: false with explicit UIDs for
+# reproducibility — avoids UID drift if the host is ever re-provisioned.
+
+- name: Create service account svc-arr
+  ansible.builtin.user:
+    name: svc-arr
+    uid: "{{ svc_arr_uid }}"
+    group: svc-arr
+    groups:
+      - media-rw
+    append: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create service account svc-media
+  ansible.builtin.user:
+    name: svc-media
+    uid: "{{ svc_media_uid }}"
+    group: svc-media
+    groups:
+      - media-rw
+      - comics-rw
+    append: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create service account svc-immich
+  ansible.builtin.user:
+    name: svc-immich
+    uid: "{{ svc_immich_uid }}"
+    group: svc-immich
+    groups:
+      - photos-rw
+    append: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create service account svc-paperless
+  ansible.builtin.user:
+    name: svc-paperless
+    uid: "{{ svc_paperless_uid }}"
+    group: svc-paperless
+    groups:
+      - docs-rw
+    append: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create primary group for svc-pihole
+  ansible.builtin.group:
+    name: svc-pihole
+    gid: "{{ svc_pihole_gid }}"
+    state: present
+
+- name: Create service account svc-pihole
+  ansible.builtin.user:
+    name: svc-pihole
+    uid: "{{ svc_pihole_uid }}"
+    group: svc-pihole
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create primary group for svc-minecraft
+  ansible.builtin.group:
+    name: svc-minecraft
+    gid: "{{ svc_minecraft_gid }}"
+    state: present
+
+- name: Create service account svc-minecraft
+  ansible.builtin.user:
+    name: svc-minecraft
+    uid: "{{ svc_minecraft_uid }}"
+    group: svc-minecraft
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+# --- Supplementary group for smbguest ---
+# smbguest uploads manga to /srv/uploads/mangas which is group-owned by comics-rw.
+# Adding it here keeps all group membership logic centralised in the users role.
+
+- name: Add smbguest to comics-rw group
+  ansible.builtin.user:
+    name: "{{ samba_guest_user }}"
+    groups:
+      - comics-rw
+    append: true
+    state: present

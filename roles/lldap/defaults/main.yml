@@ -1,0 +1,13 @@
+---
+lldap_image_tag: "v0.6.1"
+lldap_port: 17170        # web UI
+lldap_ldap_port: 3890    # LDAP (container internal port is also 3890)
+lldap_data_dir: /opt/lldap
+lldap_base_dn: "dc={{ base_domain.split('.') | join(',dc=') }}"
+lldap_admin_username: admin
+lldap_admin_password: ""   # set in vault: lldap_admin_password
+lldap_jwt_secret: ""       # set in vault: lldap_jwt_secret
+# Service account used by Authelia to query LDAP.
+# Must be created manually in the LLDAP web UI after first deployment.
+lldap_bind_dn: "uid=svc-authelia,ou=people,{{ lldap_base_dn }}"
+lldap_bind_password: ""    # set in vault: lldap_bind_password

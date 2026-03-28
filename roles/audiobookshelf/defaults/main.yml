@@ -1,0 +1,6 @@
+---
+audiobookshelf_version: "2.33.0"
+audiobookshelf_port: 13378
+audiobookshelf_data_dir: /opt/audiobookshelf
+audiobookshelf_media_dir: /srv/media/audiobooks
+audiobookshelf_user: svc-media

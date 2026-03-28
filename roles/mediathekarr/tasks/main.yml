@@ -1,0 +1,85 @@
+---
+- name: Look up mediathekarr user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ mediathekarr_user }}"
+
+- name: Set mediathekarr uid/gid facts
+  ansible.builtin.set_fact:
+    mediathekarr_uid: "{{ ansible_facts['getent_passwd'][mediathekarr_user][1] }}"
+    mediathekarr_gid: "{{ ansible_facts['getent_passwd'][mediathekarr_user][2] }}"
+
+- name: Deploy VLAN netplan config
+  ansible.builtin.template:
+    src: vlan.yaml.j2
+    dest: /etc/netplan/90-mediathekarr-vlan.yaml
+    owner: root
+    mode: "0600"
+  notify: Apply netplan
+
+- name: Flush handlers to ensure VLAN interface is up before Docker starts
+  ansible.builtin.meta: flush_handlers
+
+- name: Create MediathekArr directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ mediathekarr_user }}"
+    mode: "0755"
+  loop:
+    - "{{ mediathekarr_data_dir }}"
+
+- name: Create MediathekArr build directory
+  ansible.builtin.file:
+    path: "{{ mediathekarr_data_dir }}/build"
+    state: directory
+    owner: root
+    mode: "0755"
+
+- name: Deploy MediathekArr Dockerfile
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ mediathekarr_data_dir }}/build/Dockerfile"
+    owner: root
+    mode: "0644"
+  register: mediathekarr_dockerfile
+
+- name: Pull upstream MediathekArr image
+  community.docker.docker_image:
+    name: "pcjones/mediathekarr@{{ mediathekarr_version }}"
+    source: pull
+    force_source: true
+  register: mediathekarr_upstream_pull
+
+- name: Build local MediathekArr image with iproute2 pre-installed
+  community.docker.docker_image:
+    name: mediathekarr-local
+    tag: latest
+    source: build
+    force_source: "{{ mediathekarr_dockerfile.changed or mediathekarr_upstream_pull.changed }}"
+    build:
+      path: "{{ mediathekarr_data_dir }}/build"
+      pull: false
+      nocache: "{{ mediathekarr_upstream_pull.changed }}"
+  notify: Restart mediathekarr
+
+- name: Deploy MediathekArr entrypoint script
+  ansible.builtin.template:
+    src: entrypoint.sh.j2
+    dest: "{{ mediathekarr_data_dir }}/entrypoint.sh"
+    owner: root
+    mode: "0755"
+  notify: Restart mediathekarr
+
+- name: Deploy MediathekArr docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mediathekarr_data_dir }}/docker-compose.yml"
+    owner: "{{ mediathekarr_user }}"
+    mode: "0644"
+  notify: Restart mediathekarr
+
+- name: Start MediathekArr
+  community.docker.docker_compose_v2:
+    project_src: "{{ mediathekarr_data_dir }}"
+    state: present

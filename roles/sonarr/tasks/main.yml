@@ -1,0 +1,46 @@
+---
+- name: Look up sonarr user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ sonarr_user }}"
+
+- name: Set sonarr uid/gid facts
+  ansible.builtin.set_fact:
+    sonarr_uid: "{{ ansible_facts['getent_passwd'][sonarr_user][1] }}"
+    sonarr_gid: "{{ ansible_facts['getent_passwd'][sonarr_user][2] }}"
+
+- name: Create Sonarr directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ sonarr_user }}"
+    mode: "0755"
+  loop:
+    - "{{ sonarr_data_dir }}"
+    - "{{ sonarr_data_dir }}/config"
+
+- name: Deploy Sonarr docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ sonarr_data_dir }}/docker-compose.yml"
+    owner: "{{ sonarr_user }}"
+    mode: "0644"
+  notify: Restart sonarr
+
+- name: Start Sonarr
+  community.docker.docker_compose_v2:
+    project_src: "{{ sonarr_data_dir }}"
+    state: present
+
+- name: Wait for Sonarr config file
+  ansible.builtin.wait_for:
+    path: "{{ sonarr_data_dir }}/config/config.xml"
+    state: present
+    timeout: 30
+
+- name: Disable Sonarr native auth (handled by Authelia)
+  ansible.builtin.lineinfile:
+    path: "{{ sonarr_data_dir }}/config/config.xml"
+    regexp: "<AuthenticationMethod>.*</AuthenticationMethod>"
+    line: "  <AuthenticationMethod>External</AuthenticationMethod>"
+  notify: Restart sonarr

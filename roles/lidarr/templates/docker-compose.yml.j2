@@ -1,0 +1,16 @@
+---
+services:
+  lidarr:
+    image: lscr.io/linuxserver/lidarr:{{ lidarr_version }}
+    container_name: lidarr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ lidarr_port }}:8686"
+    volumes:
+      - "{{ lidarr_data_dir }}/config:/config"
+      - "{{ lidarr_media_dir }}:/music"
+      - "{{ lidarr_downloads_dir }}:/downloads"
+    environment:
+      PUID: "{{ lidarr_uid }}"
+      PGID: "{{ lidarr_gid }}"
+      TZ: "{{ timezone }}"

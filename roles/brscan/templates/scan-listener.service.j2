@@ -1,0 +1,16 @@
+[Unit]
+Description=Brother scanner UDP listener (eSCL scan-on-button-press)
+Documentation=https://github.com/YOUR_USERNAME/homelab
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/brscan/scan-listener.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

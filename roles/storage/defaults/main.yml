@@ -1,0 +1,4 @@
+---
+# UUID of /dev/md0 (RAID 1 array) — fill in after Phase 2 setup
+# Get with: blkid -s UUID -o value /dev/md0
+storage_srv_uuid: ""
