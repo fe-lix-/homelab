@@ -1,5 +1,5 @@
 ---
-sonarr_version: "4.0.16"
+sonarr_version: "4.0.17"
 sonarr_port: 8989
 sonarr_data_dir: /opt/sonarr
 sonarr_media_dir: /srv/media/tv

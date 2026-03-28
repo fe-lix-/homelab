@@ -43,14 +43,6 @@
   no_log: true
   notify: Restart authelia
 
-- name: Deploy Authelia users database
-  ansible.builtin.template:
-    src: users_database.yml.j2
-    dest: "{{ authelia_data_dir }}/config/users_database.yml"
-    mode: "0600"
-  no_log: true
-  notify: Restart authelia
-
 - name: Deploy Authelia docker-compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2

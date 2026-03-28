@@ -7,6 +7,7 @@ import { convertToMkv, downloadHls } from './ffmpeg.js';
 import { Semaphore } from '../utils/semaphore.js';
 import { getPlaybackInfo } from '../services/joyn.js';
 import { resolveDecryptionKeys } from '../services/widevine.js';
+import { logActivity } from '../activity.js';
 
 // Global concurrency limiter — at most 2 simultaneous downloads
 export const downloadSemaphore = new Semaphore(2);
@@ -46,6 +47,7 @@ export async function startDownload(item: QueueItem): Promise<void> {
 
   try {
     item.status = 'Downloading';
+    logActivity('download_started', { title: item.title, nzo_id: item.nzo_id });
     console.log(`[${timestamp()}] [Download] Starting: "${item.title}"`);
 
     // --- Resolve joyn-vod:// URIs to real HLS stream URLs ---
@@ -151,6 +153,7 @@ export async function startDownload(item: QueueItem): Promise<void> {
     const externalPath = path.join(DOWNLOAD_FOLDER_PATH_MAPPING, relativeMkv);
 
     moveToHistory(item, externalPath);
+    logActivity('download_completed', { title: item.title, nzo_id: item.nzo_id, path: externalPath });
     console.log(`[${timestamp()}] [Download] Completed: "${item.title}" → ${externalPath}`);
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -161,6 +164,7 @@ export async function startDownload(item: QueueItem): Promise<void> {
       try { fs.unlinkSync(mp4Path); } catch { /* ignore cleanup errors */ }
     }
 
+    logActivity('download_failed', { title: item.title, nzo_id: item.nzo_id, error: message });
     moveToHistoryFailed(item, message);
   } finally {
     downloadSemaphore.release();

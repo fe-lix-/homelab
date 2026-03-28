@@ -1,5 +1,5 @@
 ---
-komga_version: "1.24.1"
+komga_version: "1.24.3"
 komga_port: 25600
 komga_data_dir: /opt/komga
 komga_library_dir: /srv/comics

@@ -4,16 +4,19 @@
     name: auth-internal
     state: present
 
-- name: Create LLDAP data directory
+- name: Create LLDAP config directory
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ lldap_data_dir }}"
     state: directory
     owner: root
     group: root
     mode: "0750"
-  loop:
-    - "{{ lldap_data_dir }}"
-    - "{{ lldap_data_dir }}/data"
+
+- name: Create LLDAP data directory (owned by container user)
+  ansible.builtin.file:
+    path: "{{ lldap_data_dir }}/data"
+    state: directory
+    mode: "0750"
 
 - name: Deploy LLDAP docker-compose file
   ansible.builtin.template:

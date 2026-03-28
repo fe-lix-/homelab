@@ -26,6 +26,7 @@ export interface HistoryItem {
   fail_message: string;
   download_time: number;
   name: string;
+  videoUrl?: string;
 }
 
 // Global in-memory state
@@ -89,6 +90,7 @@ export function moveToHistoryFailed(item: QueueItem, errorMessage: string): void
     fail_message: errorMessage,
     download_time: downloadTimeSec,
     name: item.title,
+    videoUrl: item.videoUrl,
   };
 
   downloadHistory.unshift(historyItem);

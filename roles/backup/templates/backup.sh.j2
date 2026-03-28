@@ -36,6 +36,24 @@ restic forget \
 
 echo "Local backup complete."
 
+# Write Prometheus metrics for Grafana
+TEXTFILE_DIR="/opt/monitoring/textfile"
+if [ -d "$TEXTFILE_DIR" ]; then
+  STATS=$(restic stats latest --json 2>/dev/null || echo '{}')
+  SIZE=$(echo "$STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_size',0))" 2>/dev/null || echo 0)
+  FILES=$(echo "$STATS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('total_file_count',0))" 2>/dev/null || echo 0)
+  printf '# HELP restic_backup_last_success_timestamp_seconds Unix timestamp of last successful backup\n' > "$TEXTFILE_DIR/restic.prom.tmp"
+  printf '# TYPE restic_backup_last_success_timestamp_seconds gauge\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf 'restic_backup_last_success_timestamp_seconds %s\n' "$(date +%s)" >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf '# HELP restic_backup_total_size_bytes Total size of all files in the latest snapshot\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf '# TYPE restic_backup_total_size_bytes gauge\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf 'restic_backup_total_size_bytes %s\n' "$SIZE" >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf '# HELP restic_backup_files_total Number of files in the latest snapshot\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf '# TYPE restic_backup_files_total gauge\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf 'restic_backup_files_total %s\n' "$FILES" >> "$TEXTFILE_DIR/restic.prom.tmp"
+  mv "$TEXTFILE_DIR/restic.prom.tmp" "$TEXTFILE_DIR/restic.prom"
+fi
+
 {% if backup_b2_account_id | length > 0 %}
 # --- B2 offsite backup ---
 echo "Starting B2 offsite backup..."

@@ -4,10 +4,15 @@
     database: passwd
     key: "{{ mediathekarr_user }}"
 
+- name: Look up media-rw group
+  ansible.builtin.getent:
+    database: group
+    key: media-rw
+
 - name: Set mediathekarr uid/gid facts
   ansible.builtin.set_fact:
     mediathekarr_uid: "{{ ansible_facts['getent_passwd'][mediathekarr_user][1] }}"
-    mediathekarr_gid: "{{ ansible_facts['getent_passwd'][mediathekarr_user][2] }}"
+    mediathekarr_gid: "{{ ansible_facts['getent_group']['media-rw'][1] }}"
 
 - name: Deploy VLAN netplan config
   ansible.builtin.template:

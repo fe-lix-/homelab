@@ -4,10 +4,15 @@
     database: passwd
     key: "{{ qbittorrent_user }}"
 
+- name: Look up media-rw group
+  ansible.builtin.getent:
+    database: group
+    key: media-rw
+
 - name: Set qbittorrent uid/gid facts
   ansible.builtin.set_fact:
     qbittorrent_uid: "{{ ansible_facts['getent_passwd'][qbittorrent_user][1] }}"
-    qbittorrent_gid: "{{ ansible_facts['getent_passwd'][qbittorrent_user][2] }}"
+    qbittorrent_gid: "{{ ansible_facts['getent_group']['media-rw'][1] }}"
 
 - name: Create qBittorrent directories
   ansible.builtin.file:

@@ -181,7 +181,8 @@ check_tree /srv/media/tv         svc-arr
 check_tree /srv/media/movies     svc-arr
 check_tree /srv/media/music      svc-arr
 check_tree /srv/media/audiobooks svc-media
-check_tree /srv/photos           svc-immich
+# NOTE: Immich runs as root in its container (no PUID/PGID support), so
+# /srv/photos/upload/** will always be root-owned — only the dir itself is checked above.
 check_tree /srv/paperless        svc-paperless
 
 echo ""
