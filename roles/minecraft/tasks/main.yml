@@ -27,12 +27,7 @@
     owner: root
     group: root
     mode: "0644"
-  notify: Restart minecraft
 
-- name: Start minecraft
-  community.docker.docker_compose_v2:
-    project_src: "{{ minecraft_data_dir }}"
-    state: present
 
 - name: Deploy mc-proxy script
   ansible.builtin.template:

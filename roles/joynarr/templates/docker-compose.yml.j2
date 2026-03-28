@@ -14,7 +14,7 @@ services:
       TZ: "{{ timezone }}"
       INDEXER_PORT: "{{ joynarr_indexer_port }}"
       DOWNLOADER_PORT: "5007"
-      DOWNLOAD_FOLDER_PATH_MAPPING: "/downloads/completed"
+      DOWNLOAD_FOLDER_PATH_MAPPING: "/downloads"
       TVDB_API_BASE_URL: "{{ joynarr_tvdb_api_base_url }}"
       BRIGHTDATA_PROXY_URL: "{{ joynarr_sock5_proxy_url }}"
     networks:

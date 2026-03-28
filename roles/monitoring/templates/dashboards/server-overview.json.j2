@@ -397,6 +397,92 @@
         }
       ]
     }
+    ,
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 33 },
+      "id": 17,
+      "title": "Backups",
+      "type": "row"
+    },
+    {
+      "id": 18,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 90000 },
+              { "color": "red", "value": 172800 }
+            ]
+          },
+          "mappings": []
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 34 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "auto" },
+      "title": "Last Backup",
+      "type": "stat",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "time() - restic_backup_last_success_timestamp_seconds",
+          "legendFormat": "Age",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "decbytes",
+          "thresholds": {
+            "steps": [{ "color": "blue", "value": null }]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 34 },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "auto" },
+      "title": "Backup Size",
+      "type": "stat",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "restic_backup_total_size_bytes",
+          "legendFormat": "Size",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "fieldConfig": {
+        "defaults": { "unit": "decbytes", "custom": { "fillOpacity": 20, "lineWidth": 1, "spanNulls": false } },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 33 },
+      "options": { "tooltip": { "mode": "single" }, "legend": { "displayMode": "hidden" } },
+      "title": "Backup Size Over Time",
+      "type": "timeseries",
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": { "type": "prometheus", "uid": "prometheus" },
+          "expr": "restic_backup_total_size_bytes",
+          "legendFormat": "Total size",
+          "range": true
+        }
+      ]
+    }
   ],
   "refresh": "30s",
   "schemaVersion": 39,

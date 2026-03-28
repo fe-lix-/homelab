@@ -222,4 +222,33 @@ router.post(
   }
 );
 
+/**
+ * POST /download/retry/:nzo_id
+ * Re-queue a failed history item for download.
+ */
+router.post('/download/retry/:nzo_id', (req: Request, res: Response): void => {
+  const { nzo_id } = req.params;
+  const historyItem = downloadHistory.find(h => h.nzo_id === nzo_id);
+
+  if (!historyItem) {
+    res.status(404).json({ error: 'History item not found' });
+    return;
+  }
+  if (!historyItem.videoUrl) {
+    res.status(422).json({ error: 'No video URL stored for this item — cannot retry' });
+    return;
+  }
+
+  deleteHistoryItem(nzo_id);
+  const item = createQueueItem(historyItem.name, historyItem.videoUrl, historyItem.category);
+
+  console.log(`[${timestamp()}] [Downloader] Retrying: "${item.title}" (${item.nzo_id})`);
+
+  startDownload(item).catch(err => {
+    console.error(`[${timestamp()}] [Downloader] Unhandled error in startDownload:`, err);
+  });
+
+  res.json({ status: true, nzo_ids: [item.nzo_id] });
+});
+
 export default router;

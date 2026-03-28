@@ -1,9 +1,12 @@
 ---
 - name: Create monitoring directories
   ansible.builtin.file:
-    path: "{{ monitoring_data_dir }}"
+    path: "{{ item }}"
     state: directory
     mode: "0755"
+  loop:
+    - "{{ monitoring_data_dir }}"
+    - "{{ monitoring_textfile_dir }}"
 
 - name: Deploy monitoring docker-compose file
   ansible.builtin.template:

@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { buildCapsResponse } from './caps.js';
 import { handleSearch, SearchParams } from './search.js';
 import { buildFakeNzb } from './nzb.js';
+import { logActivity } from '../activity.js';
 
 const router = Router();
 
@@ -62,6 +63,12 @@ router.get('/api', async (req: Request, res: Response): Promise<void> => {
       try {
         const baseUrl = buildBaseUrl(req);
         const xml = await handleSearch(params, baseUrl);
+        logActivity('search', {
+          q: params.q,
+          tvdbid: params.tvdbid,
+          season: params.season,
+          ep: params.ep,
+        });
         res.set('Content-Type', 'application/rss+xml; charset=utf-8');
         res.send(xml);
       } catch (err) {

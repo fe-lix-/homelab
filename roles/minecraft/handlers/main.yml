@@ -1,8 +1,4 @@
 ---
-- name: Restart minecraft
-  community.docker.docker_compose_v2:
-    project_src: "{{ minecraft_data_dir }}"
-    state: restarted
 
 - name: Reload systemd
   ansible.builtin.systemd:

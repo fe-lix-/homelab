@@ -28,13 +28,13 @@
     mode: "0644"
   notify: Restart jellyfin
 
-- name: Deploy Jellyfin SSO plugin config
+- name: Deploy Jellyfin SSO plugin config (first deploy only — Jellyfin manages this file at runtime)
   ansible.builtin.template:
     src: SSO-Auth.xml.j2
     dest: "{{ jellyfin_data_dir }}/config/plugins/configurations/SSO-Auth.xml"
     owner: "{{ jellyfin_user }}"
     mode: "0644"
-  notify: Restart jellyfin
+    force: false
 
 - name: Start Jellyfin
   community.docker.docker_compose_v2:

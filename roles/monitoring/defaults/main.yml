@@ -1,7 +1,7 @@
 ---
 grafana_version: "11.5.2"
-loki_version: "3.6.7"
-alloy_version: "v1.14.0"
+loki_version: "3.7.1"
+alloy_version: "v1.14.2"
 prometheus_version: "v3.10.0"
 node_exporter_version: "v1.10.2"
 cadvisor_version: "v0.55.1"
@@ -9,6 +9,7 @@ smartctl_exporter_version: "v0.12.0"
 grafana_port: 3002
 webhook_receiver_port: 9095
 monitoring_data_dir: /opt/monitoring
+monitoring_textfile_dir: /opt/monitoring/textfile
 grafana_admin_user: "admin"
 grafana_admin_password: "CHANGE_ME"
 loki_retention_period: "30d"

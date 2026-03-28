@@ -41,28 +41,3 @@
     project_src: "{{ komga_data_dir }}"
     state: present
 
-- name: Wait for Komga to be ready
-  ansible.builtin.uri:
-    url: "http://127.0.0.1:{{ komga_port }}/api/v1/login"
-    status_code: [200, 401, 405]
-  register: komga_health
-  retries: 10
-  delay: 3
-  until: komga_health.status in [200, 401, 405]
-  when: komga_admin_email | length > 0
-
-- name: Deploy Komga user provisioning script
-  ansible.builtin.template:
-    src: provision-users.py.j2
-    dest: "{{ komga_data_dir }}/provision-users.py"
-    mode: "0700"
-  no_log: true
-  when: komga_admin_email | length > 0
-
-- name: Provision Komga users
-  ansible.builtin.command:
-    cmd: python3 {{ komga_data_dir }}/provision-users.py
-  register: komga_provision_result
-  changed_when: "'CHANGED' in komga_provision_result.stdout"
-  no_log: true
-  when: komga_admin_email | length > 0
