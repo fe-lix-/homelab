@@ -1,0 +1,42 @@
+---
+- name: Look up jellyfin user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ jellyfin_user }}"
+
+- name: Set jellyfin uid/gid facts
+  ansible.builtin.set_fact:
+    jellyfin_uid: "{{ ansible_facts['getent_passwd'][jellyfin_user][1] }}"
+    jellyfin_gid: "{{ ansible_facts['getent_passwd'][jellyfin_user][2] }}"
+
+- name: Create Jellyfin directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ jellyfin_user }}"
+    mode: "0755"
+  loop:
+    - "{{ jellyfin_data_dir }}"
+    - "{{ jellyfin_data_dir }}/config"
+    - "{{ jellyfin_data_dir }}/cache"
+
+- name: Deploy Jellyfin docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ jellyfin_data_dir }}/docker-compose.yml"
+    owner: "{{ jellyfin_user }}"
+    mode: "0644"
+  notify: Restart jellyfin
+
+- name: Deploy Jellyfin SSO plugin config
+  ansible.builtin.template:
+    src: SSO-Auth.xml.j2
+    dest: "{{ jellyfin_data_dir }}/config/plugins/configurations/SSO-Auth.xml"
+    owner: "{{ jellyfin_user }}"
+    mode: "0644"
+  notify: Restart jellyfin
+
+- name: Start Jellyfin
+  community.docker.docker_compose_v2:
+    project_src: "{{ jellyfin_data_dir }}"
+    state: present

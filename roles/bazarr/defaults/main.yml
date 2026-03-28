@@ -1,0 +1,6 @@
+---
+bazarr_version: "1.5.6"
+bazarr_port: 6767
+bazarr_data_dir: /opt/bazarr
+bazarr_media_dir: /srv/media
+bazarr_user: svc-arr

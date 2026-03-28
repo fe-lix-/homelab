@@ -1,0 +1,6 @@
+---
+certbot_venv: /opt/certbot-venv
+certbot_email: ""
+certbot_gandi_api_key: ""
+certbot_domain: "{{ base_domain }}"
+certbot_credentials_file: /etc/letsencrypt/gandi.ini

@@ -1,0 +1,635 @@
+{% macro ssl_params() %}
+    http2 on;
+    ssl_certificate {{ nginx_ssl_cert }};
+    ssl_certificate_key {{ nginx_ssl_key }};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    server_tokens off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+{% endmacro %}
+
+{% macro authelia_location() %}
+    location /internal/authelia/authz {
+        internal;
+        proxy_pass http://127.0.0.1:{{ authelia_port }}/api/authz/auth-request;
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_pass_request_body off;
+    }
+{% endmacro %}
+
+{% macro authelia_auth() %}
+        auth_request /internal/authelia/authz;
+        auth_request_set $redirection_url $upstream_http_location;
+        auth_request_set $user $upstream_http_remote_user;
+        auth_request_set $groups $upstream_http_remote_groups;
+        auth_request_set $name $upstream_http_remote_name;
+        auth_request_set $email $upstream_http_remote_email;
+        proxy_set_header Remote-User $user;
+        proxy_set_header Remote-Groups $groups;
+        proxy_set_header Remote-Name $name;
+        proxy_set_header Remote-Email $email;
+        error_page 401 =302 $redirection_url;
+        error_page 403 /403.html;
+{% endmacro %}
+
+{% macro favicon_location() %}
+    location = /favicon.ico {
+        alias /usr/share/nginx/html/favicon.svg;
+        default_type image/svg+xml;
+        access_log off;
+        expires 7d;
+    }
+    location = /favicon.svg {
+        root /usr/share/nginx/html;
+        access_log off;
+        expires 7d;
+    }
+{% endmacro %}
+
+{% macro local_guard() %}
+    if ($local_access = 0) { return 403; }
+    error_page 403 /403.html;
+    location = /403.html {
+        internal;
+        root /usr/share/nginx/html;
+    }
+    {{ favicon_location() }}
+{% endmacro %}
+
+geo $local_access {
+    default 0;
+    10.0.0.0/8 1;
+    172.16.0.0/12 1;
+    192.168.0.0/16 1;
+}
+
+# Rate limiting zone for Authelia login endpoints (brute-force protection)
+limit_req_zone $binary_remote_addr zone=authelia_login:10m rate=10r/m;
+
+# Redirect all HTTP to HTTPS
+server {
+    listen 80;
+    server_name {{ base_domain }} *.{{ base_domain }};
+    return 301 https://$host$request_uri;
+}
+
+# Redirect unknown subdomains to homepage
+server {
+    listen {{ nginx_port }} ssl default_server;
+    server_name _;
+    {{ ssl_params() }}
+    return 302 https://homepage.{{ base_domain }};
+}
+
+# Homepage ({{ base_domain }} and homepage.{{ base_domain }})
+server {
+    listen {{ nginx_port }} ssl;
+    server_name {{ base_domain }} homepage.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ authelia_location() }}
+    {{ favicon_location() }}
+
+    # Goploader downloads — open to everyone (links contain the decryption key)
+    location /v/ {
+        proxy_pass http://127.0.0.1:{{ goploader_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Minecraft IP whitelist portal — Authelia protected, open to internet
+    location = /minecraft {
+        {{ authelia_auth() }}
+        error_page 403 /mc-forbidden.html;
+        proxy_pass http://127.0.0.1:{{ minecraft_whitelist_port }}/;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Static landing page for public visitors
+    location = /landing.html {
+        internal;
+        root /usr/share/nginx/html;
+    }
+
+    # Themed 403 for the Minecraft whitelist
+    location = /mc-forbidden.html {
+        internal;
+        root /usr/share/nginx/html;
+    }
+
+    # Homepage — public: landing page, local: dashboard
+    location / {
+        if ($local_access = 0) {
+            rewrite ^ /landing.html last;
+        }
+        proxy_pass http://127.0.0.1:{{ homepage_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+# Authelia SSO portal (no local_guard — Authelia handles its own security,
+# and OIDC endpoints must be reachable from Docker containers)
+server {
+    listen {{ nginx_port }} ssl;
+    server_name auth.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ favicon_location() }}
+
+    # Rate-limit login submissions to prevent brute-force attacks
+    location ~ ^/api/(firstfactor|secondfactor) {
+        limit_req zone=authelia_login burst=5 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:{{ authelia_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ authelia_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name comics.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+
+    location = /login {
+        if ($arg_error = "access_denied") {
+            return 403;
+        }
+        proxy_pass http://127.0.0.1:{{ komga_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ komga_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name jellyfin.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_connect_timeout 60s;
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ jellyfin_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name torrent.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ qbittorrent_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name sonarr.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ sonarr_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name radarr.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ radarr_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name lidarr.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ lidarr_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name prowlarr.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ prowlarr_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name bazarr.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ bazarr_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name mediathek.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ mediathekarr_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name joynarr.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ joynarr_indexer_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name uptime.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    # Public paths — granular with slug/filename validation
+    location ~ ^/status/[0-9a-zA-Z_-]+$ {
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
+    location ~ ^/api/status-page/heartbeat/[0-9a-zA-Z_-]+$ {
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/api/push/[0-9a-zA-Z_-]+$ {
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location ~ ^/api/badge/[0-9a-zA-Z_-]+/[a-z]+$ {
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location /assets/ {
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+        proxy_set_header Host $host;
+    }
+
+    location ~ ^/upload/[0-9a-zA-Z_-]+\.[a-z]+$ {
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+        proxy_set_header Host $host;
+    }
+
+    location = /icon.svg {
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+    }
+
+    # Everything else (dashboard) — admins only via Authelia
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ uptime_kuma_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name photos.{{ base_domain }};
+    client_max_body_size 50000M;
+    {{ ssl_params() }}
+    {{ local_guard() }}
+
+    proxy_read_timeout 600s;
+    proxy_send_timeout 600s;
+    proxy_connect_timeout 60s;
+
+    location = /auth/login {
+        if ($arg_error = "access_denied") {
+            return 403;
+        }
+        proxy_pass http://127.0.0.1:{{ immich_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ immich_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name grafana.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ grafana_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name ha.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ homeassistant_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name audiobooks.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+
+    location = /audiobookshelf/login/ {
+        if ($arg_autoLaunch = "0") {
+            return 403;
+        }
+        proxy_pass http://127.0.0.1:{{ audiobookshelf_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ audiobookshelf_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name files.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ authelia_location() }}
+    {{ favicon_location() }}
+
+    # Downloads — open to everyone (links contain the decryption key)
+    location /v/ {
+        proxy_pass http://127.0.0.1:{{ goploader_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Static pages
+    location = /landing.html {
+        internal;
+        root /usr/share/nginx/html;
+    }
+
+    location = /403.html {
+        internal;
+        root /usr/share/nginx/html;
+    }
+
+    # Web UI & uploads — public: landing page, local: admins only via Authelia
+    location / {
+        if ($local_access = 0) {
+            rewrite ^ /landing.html last;
+        }
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ goploader_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name docs.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    client_max_body_size 50M;
+
+    location / {
+        proxy_set_header Remote-User "";
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ paperless_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name pihole.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ pihole_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name lldap.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ lldap_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name unifi.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+
+    location / {
+        proxy_pass https://{{ base_gateway }};
+        proxy_ssl_verify off;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+}

@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""
+UDP listener for Brother scanner button presses.
+
+The Brother scanner only sends button-press UDP packets to a host that has an
+open brother5 SANE connection. We satisfy this by briefly running brscan-skey
+(which opens that connection and sends the SNMP registration) every 5 minutes,
+then killing it before it can block eSCL. scan-listener holds port 54925 the
+entire time so button-press packets come to us rather than brscan-skey.
+"""
+import socket
+import subprocess
+import logging
+import os
+import threading
+import time
+import urllib.request
+from datetime import datetime
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
+log = logging.getLogger(__name__)
+
+LISTEN_PORT = 54925
+SCANNER_IP = "{{ brscan_scanner_ip }}"
+CONSUME_DIR = "{{ brscan_consume_dir }}"
+SANE_DEVICE = "{{ brscan_sane_device }}"
+BRSCAN_SKEY_EXE = "/opt/brother/scanner/brscan-skey/brscan-skey-exe"
+REGISTER_INTERVAL = 300  # seconds between re-registrations
+
+_scan_lock = threading.Lock()
+
+
+def register_scanner() -> None:
+    """Run brscan-skey briefly to register with the scanner, then kill it."""
+    log.info("Refreshing scanner registration via brscan-skey…")
+    try:
+        proc = subprocess.Popen(
+            [BRSCAN_SKEY_EXE],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        time.sleep(5)
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        # Give the scanner time to process the disconnection and return to idle
+        time.sleep(10)
+        log.info("Registration refresh complete")
+    except Exception as exc:
+        log.warning("Registration refresh failed: %s", exc)
+
+
+def registration_loop() -> None:
+    """Background thread: register on startup and every REGISTER_INTERVAL seconds."""
+    while True:
+        register_scanner()
+        time.sleep(REGISTER_INTERVAL)
+
+
+def adf_has_paper() -> bool:
+    try:
+        url = f"http://{SCANNER_IP}/eSCL/ScannerStatus"
+        with urllib.request.urlopen(url, timeout=5) as resp:
+            body = resp.read().decode()
+        loaded = "ScannerAdfLoaded" in body
+        log.info("ADF state: %s", "loaded" if loaded else "empty")
+        return loaded
+    except Exception as exc:
+        log.warning("Could not check ADF state: %s", exc)
+        return False
+
+
+def do_scan(source: str) -> bytes | None:
+    """Run scanimage and return stdout bytes, or None on failure."""
+    for attempt in range(3):
+        if attempt > 0:
+            log.info("Retrying %s (attempt %d)…", source, attempt + 1)
+            time.sleep(5)
+        try:
+            result = subprocess.run(
+                ["scanimage", "-d", SANE_DEVICE, "--source", source,
+                 "--format=pdf", "--resolution=300"],
+                capture_output=True,
+                timeout=60,
+            )
+        except subprocess.TimeoutExpired:
+            log.error("Scan timed out (source=%s)", source)
+            return None
+
+        stderr = result.stderr.decode(errors="replace").strip()
+        if result.returncode != 0:
+            if "Device busy" in stderr:
+                log.warning("Device busy (source=%s), will retry", source)
+                continue
+            log.warning("Source %s failed (rc=%d): %s", source, result.returncode, stderr)
+            return None
+
+        if len(result.stdout) < 1024:
+            log.warning("Source %s returned %d bytes (too small), skipping", source, len(result.stdout))
+            return None
+
+        return result.stdout
+
+    return None
+
+
+def scan() -> None:
+    filename = os.path.join(
+        CONSUME_DIR,
+        f"scan_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+    )
+    log.info("Starting scan -> %s", filename)
+
+    source = "ADF" if adf_has_paper() else "Flatbed"
+    log.info("Using source: %s", source)
+
+    data = do_scan(source)
+    if data is None:
+        log.error("Scan failed — no file written")
+        return
+
+    try:
+        with open(filename, "wb") as fh:
+            fh.write(data)
+        os.chmod(filename, 0o644)
+    except OSError as exc:
+        log.error("Failed to write %s: %s", filename, exc)
+        return
+
+    log.info("Scan complete (source=%s): %s (%d bytes)", source, filename, len(data))
+
+
+def main() -> None:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.bind(("", LISTEN_PORT))
+    log.info("Listening on UDP :%d for scanner at %s", LISTEN_PORT, SCANNER_IP)
+
+    t = threading.Thread(target=registration_loop, daemon=True)
+    t.start()
+
+    while True:
+        data, addr = sock.recvfrom(4096)
+        log.info("UDP packet from %s: %s", addr[0], data[:80])
+        if addr[0] == SCANNER_IP:
+            log.info("Scanner button press detected — scanning")
+            if _scan_lock.acquire(blocking=False):
+                try:
+                    scan()
+                finally:
+                    _scan_lock.release()
+            else:
+                log.info("Scan already in progress, ignoring button press")
+        else:
+            log.info("Ignoring packet from %s (not scanner)", addr[0])
+
+
+if __name__ == "__main__":
+    main()

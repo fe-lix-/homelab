@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>YOU SHALL NOT PASS</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        @keyframes flicker {
+            0%, 100% { opacity: 1; }
+            92% { opacity: 1; }
+            93% { opacity: 0.6; }
+            94% { opacity: 1; }
+            97% { opacity: 0.8; }
+            98% { opacity: 1; }
+        }
+
+        @keyframes ember-rise {
+            0% { transform: translateY(0) scale(1); opacity: 0.8; }
+            100% { transform: translateY(-120px) scale(0.2); opacity: 0; }
+        }
+
+        body {
+            font-family: 'Georgia', serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: #0a0600;
+            color: #c8a96e;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .forge-glow {
+            position: fixed;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 600px;
+            height: 300px;
+            background: radial-gradient(ellipse at center bottom, rgba(255,80,0,0.25) 0%, rgba(180,40,0,0.1) 50%, transparent 80%);
+            pointer-events: none;
+            animation: flicker 4s infinite;
+        }
+
+        .emblem {
+            font-size: 5rem;
+            margin-bottom: 1.5rem;
+            display: block;
+            filter: drop-shadow(0 0 18px rgba(255,120,0,0.7));
+            animation: flicker 3s infinite;
+        }
+
+        .container {
+            text-align: center;
+            padding: 3rem 2.5rem;
+            max-width: 520px;
+            position: relative;
+            z-index: 10;
+            border: 1px solid #3a2a10;
+            background: rgba(10,6,0,0.85);
+            box-shadow: 0 0 60px rgba(180,60,0,0.2), inset 0 0 40px rgba(0,0,0,0.5);
+        }
+
+        h1 {
+            font-size: 2rem;
+            letter-spacing: 0.12em;
+            text-transform: uppercase;
+            color: #ff8c00;
+            text-shadow: 0 0 20px rgba(255,100,0,0.6);
+            margin-bottom: 0.5rem;
+            animation: flicker 5s infinite;
+        }
+
+        .rune-line {
+            font-size: 1.1rem;
+            letter-spacing: 0.3em;
+            color: #6b4a1e;
+            margin: 0.75rem 0 1.5rem;
+        }
+
+        .divider {
+            border: none;
+            border-top: 1px solid #3a2a10;
+            margin: 1.25rem auto;
+            width: 80%;
+        }
+
+        p {
+            color: #9a7c4a;
+            line-height: 1.7;
+            margin-bottom: 0.6rem;
+            font-size: 0.97rem;
+        }
+
+        .inscription {
+            font-style: italic;
+            color: #6b4a1e;
+            font-size: 0.88rem;
+            margin-top: 1.25rem;
+        }
+
+        a {
+            color: #ff8c00;
+            text-decoration: none;
+        }
+
+        a:hover {
+            text-shadow: 0 0 8px rgba(255,140,0,0.8);
+            text-decoration: underline;
+        }
+
+        .code {
+            font-size: 0.78rem;
+            color: #3a2a10;
+            margin-top: 1.75rem;
+            letter-spacing: 0.15em;
+        }
+
+        .ember {
+            position: fixed;
+            bottom: 10px;
+            width: 4px;
+            height: 4px;
+            border-radius: 50%;
+            background: #ff6600;
+            box-shadow: 0 0 6px 2px rgba(255,100,0,0.6);
+            animation: ember-rise 3s ease-out forwards;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="forge-glow"></div>
+
+    <div class="container">
+        <span class="emblem">⛏</span>
+        <h1>YOU SHALL NOT PASS</h1>
+        <div class="rune-line">ᚲᚺᚨᛉᚨᛞ-ᛞᚢᛗ</div>
+        <hr class="divider">
+        <p>The gates of Khazad-dûm are shut to thee.</p>
+        <p>Speak, friend, and enter — but first, thy name must be known to the Dwarven council.</p>
+        <p>
+            Contact the <a href="#">Keeper of the Gates</a> to be added to the allowlist.
+        </p>
+        <p class="inscription">"The world is grown full of peril, and in all lands love is now mingled with grief."</p>
+        <p class="code">HTTP 403 — FORBIDDEN</p>
+    </div>
+
+    <script>
+        function spawnEmber() {
+            const e = document.createElement('div');
+            e.className = 'ember';
+            e.style.left = (20 + Math.random() * 60) + '%';
+            e.style.animationDuration = (1.5 + Math.random() * 2.5) + 's';
+            e.style.width = e.style.height = (2 + Math.random() * 4) + 'px';
+            e.style.background = Math.random() > 0.5 ? '#ff6600' : '#ffaa00';
+            document.body.appendChild(e);
+            setTimeout(() => e.remove(), 4000);
+        }
+        setInterval(spawnEmber, 400);
+    </script>
+</body>
+</html>

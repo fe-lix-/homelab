@@ -1,0 +1,7 @@
+---
+lidarr_version: "3.1.0"
+lidarr_port: 8686
+lidarr_data_dir: /opt/lidarr
+lidarr_media_dir: /srv/media/music
+lidarr_downloads_dir: /srv/downloads
+lidarr_user: svc-arr

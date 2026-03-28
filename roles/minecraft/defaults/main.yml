@@ -1,0 +1,16 @@
+---
+minecraft_image_tag: "java21"
+minecraft_version: "1.20.4"
+minecraft_type: "PAPER"
+minecraft_port: 25565
+minecraft_internal_port: 25567
+minecraft_fake_port: 25566
+minecraft_rcon_port: 25575
+minecraft_data_dir: /opt/minecraft
+minecraft_user: svc-minecraft
+minecraft_memory: "2G"
+minecraft_online_mode: "false"
+minecraft_rcon_password: ""
+minecraft_idle_timeout: 7200
+minecraft_idle_check_schedule: "*-*-* *:0/5:00"
+minecraft_whitelist_port: 8765

@@ -1,0 +1,8 @@
+network:
+  version: 2
+  vlans:
+    {{ mediathekarr_vlan_interface }}.{{ mediathekarr_vlan_id }}:
+      id: {{ mediathekarr_vlan_id }}
+      link: {{ mediathekarr_vlan_interface }}
+      dhcp4: false
+      dhcp6: false

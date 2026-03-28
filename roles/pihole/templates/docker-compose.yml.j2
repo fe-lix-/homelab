@@ -1,0 +1,22 @@
+---
+services:
+  pihole:
+    image: pihole/pihole:{{ pihole_version }}
+    container_name: pihole
+    restart: unless-stopped
+    ports:
+      - "{{ ansible_host }}:53:53/tcp"
+      - "{{ ansible_host }}:53:53/udp"
+      - "127.0.0.1:{{ pihole_port }}:80"
+    volumes:
+      - "{{ pihole_data_dir }}/config/pihole:/etc/pihole"
+      - "{{ pihole_data_dir }}/config/dnsmasq.d:/etc/dnsmasq.d"
+    environment:
+      TZ: "{{ timezone }}"
+      WEBPASSWORD: "{{ pihole_admin_password }}"
+      PIHOLE_DNS_1: "{{ pihole_upstream_dns1 }}"
+      PIHOLE_DNS_2: "{{ pihole_upstream_dns2 }}"
+      PIHOLE_UID: "{{ pihole_uid }}"
+      PIHOLE_GID: "{{ pihole_gid }}"
+    cap_add:
+      - NET_ADMIN

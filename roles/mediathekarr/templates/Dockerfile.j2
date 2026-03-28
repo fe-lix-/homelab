@@ -1,0 +1,5 @@
+FROM pcjones/mediathekarr@{{ mediathekarr_version }}
+
+RUN apt-get update -qq \
+    && apt-get install -yqq --no-install-recommends iproute2 \
+    && rm -rf /var/lib/apt/lists/*

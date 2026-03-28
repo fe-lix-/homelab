@@ -1,0 +1,150 @@
+---
+- name: Get svc-minecraft uid/gid
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ minecraft_user }}"
+
+- name: Set minecraft uid/gid facts
+  ansible.builtin.set_fact:
+    minecraft_uid: "{{ ansible_facts['getent_passwd'][minecraft_user][1] }}"
+    minecraft_gid: "{{ ansible_facts['getent_passwd'][minecraft_user][2] }}"
+
+- name: Create minecraft directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ minecraft_user }}"
+    group: "{{ minecraft_user }}"
+    mode: "0750"
+  loop:
+    - "{{ minecraft_data_dir }}"
+    - "{{ minecraft_data_dir }}/data"
+
+- name: Deploy minecraft docker-compose
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ minecraft_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart minecraft
+
+- name: Start minecraft
+  community.docker.docker_compose_v2:
+    project_src: "{{ minecraft_data_dir }}"
+    state: present
+
+- name: Deploy mc-proxy script
+  ansible.builtin.template:
+    src: mc-proxy.py.j2
+    dest: "{{ minecraft_data_dir }}/mc-proxy.py"
+    owner: root
+    group: root
+    mode: "0750"
+  notify: Restart mc-proxy
+
+- name: Deploy mc-fake-server script
+  ansible.builtin.template:
+    src: mc-fake-server.py.j2
+    dest: "{{ minecraft_data_dir }}/mc-fake-server.py"
+    owner: root
+    group: root
+    mode: "0750"
+  notify: Restart mc-fake-server
+
+- name: Deploy mc-start script
+  ansible.builtin.template:
+    src: mc-start.sh.j2
+    dest: "{{ minecraft_data_dir }}/mc-start.sh"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Deploy mc-idle-watcher script
+  ansible.builtin.template:
+    src: mc-idle-watcher.py.j2
+    dest: "{{ minecraft_data_dir }}/mc-idle-watcher.py"
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Deploy mc-proxy systemd service
+  ansible.builtin.template:
+    src: mc-proxy.service.j2
+    dest: /etc/systemd/system/mc-proxy.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy mc-fake-server systemd service
+  ansible.builtin.template:
+    src: mc-fake-server.service.j2
+    dest: /etc/systemd/system/mc-fake-server.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy mc-idle-watcher systemd service
+  ansible.builtin.template:
+    src: mc-idle-watcher.service.j2
+    dest: /etc/systemd/system/mc-idle-watcher.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy mc-idle-watcher systemd timer
+  ansible.builtin.template:
+    src: mc-idle-watcher.timer.j2
+    dest: /etc/systemd/system/mc-idle-watcher.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy mc-whitelist script
+  ansible.builtin.template:
+    src: mc-whitelist.py.j2
+    dest: "{{ minecraft_data_dir }}/mc-whitelist.py"
+    owner: "{{ minecraft_user }}"
+    group: "{{ minecraft_user }}"
+    mode: "0755"
+  notify: Restart mc-whitelist
+
+- name: Deploy mc-whitelist systemd service
+  ansible.builtin.template:
+    src: mc-whitelist.service.j2
+    dest: /etc/systemd/system/mc-whitelist.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers (reload systemd before enabling services)
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start mc-proxy
+  ansible.builtin.systemd:
+    name: mc-proxy.service
+    enabled: true
+    state: started
+
+- name: Enable and start mc-fake-server
+  ansible.builtin.systemd:
+    name: mc-fake-server.service
+    enabled: true
+    state: started
+
+- name: Enable and start mc-idle-watcher timer
+  ansible.builtin.systemd:
+    name: mc-idle-watcher.timer
+    enabled: true
+    state: started
+
+- name: Enable and start mc-whitelist
+  ansible.builtin.systemd:
+    name: mc-whitelist.service
+    enabled: true
+    state: started

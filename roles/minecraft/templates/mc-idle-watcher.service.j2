@@ -1,0 +1,10 @@
+[Unit]
+Description=Minecraft idle watcher (shuts down MC after idle timeout)
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ minecraft_data_dir }}/mc-idle-watcher.py
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=mc-idle-watcher

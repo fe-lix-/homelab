@@ -1,0 +1,15 @@
+---
+services:
+  sabnzbd:
+    image: lscr.io/linuxserver/sabnzbd:{{ sabnzbd_version }}
+    container_name: sabnzbd
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ sabnzbd_port }}:8080"
+    volumes:
+      - "{{ sabnzbd_data_dir }}/config:/config"
+      - "{{ sabnzbd_downloads_dir }}:/downloads"
+    environment:
+      PUID: "{{ sabnzbd_uid }}"
+      PGID: "{{ sabnzbd_gid }}"
+      TZ: "{{ timezone }}"

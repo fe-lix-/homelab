@@ -1,0 +1,13 @@
+---
+services:
+  homepage:
+    image: ghcr.io/gethomepage/homepage:{{ homepage_version }}
+    container_name: homepage
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ homepage_port }}:3000"
+    volumes:
+      - "{{ homepage_data_dir }}/config:/app/config"
+    environment:
+      TZ: "{{ timezone }}"
+      HOMEPAGE_ALLOWED_HOSTS: "{{ homepage_allowed_hosts }}"

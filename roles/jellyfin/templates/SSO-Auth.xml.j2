@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<PluginConfiguration xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <SamlConfigs />
+  <OidConfigs>
+    <item>
+      <key>
+        <string>authelia</string>
+      </key>
+      <value>
+        <PluginConfiguration>
+          <OidEndpoint>https://auth.{{ base_domain }}</OidEndpoint>
+          <OidClientId>jellyfin</OidClientId>
+          <OidSecret>{{ authelia_jellyfin_oidc_secret }}</OidSecret>
+          <Enabled>true</Enabled>
+          <EnableAuthorization>true</EnableAuthorization>
+          <EnableAllFolders>true</EnableAllFolders>
+          <EnabledFolders />
+          <AdminRoles>
+            <string>admin</string>
+          </AdminRoles>
+          <Roles>
+            <string>admin</string>
+            <string>jellyfin</string>
+          </Roles>
+          <EnableFolderRoles>false</EnableFolderRoles>
+          <EnableLiveTvRoles>false</EnableLiveTvRoles>
+          <EnableLiveTv>false</EnableLiveTv>
+          <EnableLiveTvManagement>false</EnableLiveTvManagement>
+          <LiveTvRoles />
+          <LiveTvManagementRoles />
+          <FolderRoleMappings />
+          <RoleClaim>groups</RoleClaim>
+          <OidScopes>
+            <string>openid</string>
+            <string>email</string>
+            <string>profile</string>
+            <string>groups</string>
+          </OidScopes>
+          <DefaultProvider />
+          <SchemeOverride>https</SchemeOverride>
+          <PortOverride xsi:nil="true" />
+          <NewPath>false</NewPath>
+          <!-- CanonicalLinks (username -> Jellyfin UUID) are managed by Jellyfin at runtime.
+               Deploying this template will clear them; re-link via the SSO plugin's
+               user self-service page at jellyfin.{{ base_domain }}/sso/OID/p/authelia -->
+          <CanonicalLinks />
+          <DisableHttps>false</DisableHttps>
+          <DisablePushedAuthorization>true</DisablePushedAuthorization>
+          <DoNotValidateEndpoints>false</DoNotValidateEndpoints>
+          <DoNotValidateIssuerName>false</DoNotValidateIssuerName>
+        </PluginConfiguration>
+      </value>
+    </item>
+  </OidConfigs>
+</PluginConfiguration>

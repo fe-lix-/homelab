@@ -1,0 +1,15 @@
+---
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:{{ homeassistant_version }}
+    container_name: homeassistant
+    restart: unless-stopped
+    network_mode: host
+    volumes:
+      - "{{ homeassistant_data_dir }}/config:/config"
+      - /run/dbus:/run/dbus:ro
+      # Patch for aiopvpc KeyError: 2026 (upstream library unmaintained, missing holiday data)
+      # If HA updates Python version, update the path below (check with: docker exec homeassistant python3 --version)
+      - "{{ homeassistant_data_dir }}/patches/pvpc_tariff.py:/usr/local/lib/python3.14/site-packages/aiopvpc/pvpc_tariff.py:ro"
+    environment:
+      TZ: "{{ timezone }}"

@@ -1,0 +1,6 @@
+---
+qbittorrent_version: "5.1.4"
+qbittorrent_port: 8085
+qbittorrent_data_dir: /opt/qbittorrent
+qbittorrent_downloads_dir: /srv/downloads/torrents
+qbittorrent_user: svc-arr

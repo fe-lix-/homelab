@@ -1,0 +1,31 @@
+---
+- name: Create auth-internal Docker network
+  community.docker.docker_network:
+    name: auth-internal
+    state: present
+
+- name: Create LLDAP data directory
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+  loop:
+    - "{{ lldap_data_dir }}"
+    - "{{ lldap_data_dir }}/data"
+
+- name: Deploy LLDAP docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ lldap_data_dir }}/docker-compose.yml"
+    owner: root
+    group: root
+    mode: "0640"
+  no_log: true
+  notify: Restart lldap
+
+- name: Start LLDAP
+  community.docker.docker_compose_v2:
+    project_src: "{{ lldap_data_dir }}"
+    state: present

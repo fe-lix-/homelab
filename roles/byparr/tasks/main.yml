@@ -1,0 +1,18 @@
+---
+- name: Create Byparr directory
+  ansible.builtin.file:
+    path: "{{ byparr_data_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Deploy Byparr docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ byparr_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart byparr
+
+- name: Start Byparr
+  community.docker.docker_compose_v2:
+    project_src: "{{ byparr_data_dir }}"
+    state: present

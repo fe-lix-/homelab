@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Minecraft TCP proxy — always listens on the public port.
+
+Forwards to the real MC server when it is up, otherwise to the fake server.
+Zero downtime: the proxy never stops, handover is instant.
+"""
+
+import ipaddress
+import json
+import logging
+import os
+import socket
+import threading
+import time
+
+LISTEN_HOST = '0.0.0.0'
+LISTEN_PORT = {{ minecraft_port }}        # public port (25565)
+MC_HOST = '127.0.0.1'
+MC_PORT = {{ minecraft_internal_port }}   # real MC internal port (25567)
+FAKE_PORT = {{ minecraft_fake_port }}     # fake server port (25566)
+READY_FLAG = '{{ minecraft_data_dir }}/mc-ready.flag'
+WHITELIST_FILE = '{{ minecraft_data_dir }}/ip-whitelist.json'
+LOCAL_NETWORKS = [
+    ipaddress.ip_network('10.0.0.0/8'),
+    ipaddress.ip_network('172.16.0.0/12'),
+    ipaddress.ip_network('192.168.0.0/16'),
+    ipaddress.ip_network('127.0.0.0/8'),
+]
+
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s %(message)s',
+)
+log = logging.getLogger(__name__)
+
+_whitelist_cache = {}
+_cache_lock = threading.Lock()
+_cache_mtime = 0.0
+
+
+def _refresh_whitelist():
+    global _whitelist_cache, _cache_mtime
+    try:
+        mtime = os.path.getmtime(WHITELIST_FILE)
+        if mtime == _cache_mtime:
+            return
+        with open(WHITELIST_FILE) as f:
+            data = json.load(f)
+        now = time.time()
+        with _cache_lock:
+            _whitelist_cache = dict((ip, exp) for ip, exp in data.items() if exp > now)
+            _cache_mtime = mtime
+    except (FileNotFoundError, json.JSONDecodeError, OSError):
+        pass
+
+
+def is_local_ip(ip_str):
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        return any(ip in net for net in LOCAL_NETWORKS)
+    except ValueError:
+        return False
+
+
+def is_ip_allowed(ip_str):
+    if is_local_ip(ip_str):
+        return True
+    _refresh_whitelist()
+    with _cache_lock:
+        expiry = _whitelist_cache.get(ip_str)
+    return expiry is not None and time.time() < expiry
+
+
+def is_mc_ready():
+    if not os.path.exists(READY_FLAG):
+        return False
+    # Flag exists — verify the port is actually accepting connections (crash guard)
+    try:
+        s = socket.create_connection((MC_HOST, MC_PORT), timeout=1)
+        s.close()
+        return True
+    except OSError:
+        # Server crashed with flag left behind — clean it up
+        try:
+            os.remove(READY_FLAG)
+        except OSError:
+            pass
+        return False
+
+
+def relay(src, dst):
+    try:
+        while chunk := src.recv(4096):
+            dst.sendall(chunk)
+    except OSError:
+        pass
+    finally:
+        for s in (src, dst):
+            try:
+                s.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            try:
+                s.close()
+            except OSError:
+                pass
+
+
+def handle(client, addr):
+    client.settimeout(30)
+    client_ip = addr[0]
+    if not is_ip_allowed(client_ip):
+        log.info("Blocked connection from %s (not whitelisted)", client_ip)
+        client.close()
+        return
+    target_port = MC_PORT if is_mc_ready() else FAKE_PORT
+    log.debug("Connection from %s → :%d", addr, target_port)
+    try:
+        upstream = socket.create_connection((MC_HOST, target_port), timeout=5)
+    except OSError as e:
+        log.warning("Cannot connect to :%d — %s", target_port, e)
+        client.close()
+        return
+    threading.Thread(target=relay, args=(upstream, client), daemon=True).start()
+    relay(client, upstream)
+
+
+def main():
+    log.info("mc-proxy starting on :%d (MC=:%d, fake=:%d)", LISTEN_PORT, MC_PORT, FAKE_PORT)
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as srv:
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind((LISTEN_HOST, LISTEN_PORT))
+        srv.listen(16)
+        while True:
+            try:
+                client, addr = srv.accept()
+                threading.Thread(target=handle, args=(client, addr), daemon=True).start()
+            except Exception as e:
+                log.error("Accept error: %s", e)
+
+
+if __name__ == '__main__':
+    main()

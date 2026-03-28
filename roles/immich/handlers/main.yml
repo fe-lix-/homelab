@@ -1,0 +1,5 @@
+---
+- name: Restart immich
+  community.docker.docker_compose_v2:
+    project_src: "{{ immich_data_dir }}"
+    state: restarted

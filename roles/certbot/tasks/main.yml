@@ -1,0 +1,79 @@
+---
+- name: Install python3-venv
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+
+- name: Install certbot and certbot-dns-gandi in virtualenv
+  ansible.builtin.pip:
+    name:
+      - certbot
+      - certbot-dns-gandi
+    virtualenv: "{{ certbot_venv }}"
+    virtualenv_command: python3 -m venv
+
+- name: Symlink certbot to /usr/local/bin
+  ansible.builtin.file:
+    path: /usr/local/bin/certbot
+    src: "{{ certbot_venv }}/bin/certbot"
+    state: link
+
+- name: Create /etc/letsencrypt directory
+  ansible.builtin.file:
+    path: /etc/letsencrypt
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Deploy Gandi credentials file
+  ansible.builtin.template:
+    src: gandi.ini.j2
+    dest: "{{ certbot_credentials_file }}"
+    mode: "0600"
+    owner: root
+    group: root
+  no_log: true
+
+- name: Obtain wildcard certificate
+  ansible.builtin.command:
+    cmd: >
+      /usr/local/bin/certbot certonly
+      --authenticator dns-gandi
+      --dns-gandi-credentials {{ certbot_credentials_file }}
+      -d "*.{{ certbot_domain }}"
+      -d "{{ certbot_domain }}"
+      --agree-tos
+      --email {{ certbot_email }}
+      --non-interactive
+    creates: "/etc/letsencrypt/live/{{ certbot_domain }}/fullchain.pem"
+
+- name: Deploy certbot-renew systemd service
+  ansible.builtin.template:
+    src: certbot-renew.service.j2
+    dest: /etc/systemd/system/certbot-renew.service
+    mode: "0644"
+  notify: Reload certbot timer
+
+- name: Deploy certbot-renew systemd timer
+  ansible.builtin.template:
+    src: certbot-renew.timer.j2
+    dest: /etc/systemd/system/certbot-renew.timer
+    mode: "0644"
+  notify: Reload certbot timer
+
+- name: Deploy nginx reload hook
+  ansible.builtin.template:
+    src: reload-nginx.sh.j2
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-nginx.sh
+    mode: "0755"
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start certbot-renew timer
+  ansible.builtin.systemd:
+    name: certbot-renew.timer
+    enabled: true
+    state: started
+    daemon_reload: true

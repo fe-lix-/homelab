@@ -1,0 +1,9 @@
+[Unit]
+Description=Manga Scheduler — move next series batch to Komga
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ manga_scheduler_data_dir }}/manga-scheduler.py
+Nice=19
+IOSchedulingClass=idle

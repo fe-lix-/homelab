@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+LOG="{{ backup_log_file }}"
+exec > >(tee -a "$LOG") 2>&1
+
+echo "========================================="
+echo "Backup started: $(date -Iseconds)"
+echo "========================================="
+
+# Dump Immich PostgreSQL database
+echo "Dumping Immich database..."
+docker exec immich-db pg_dump -U immich immich > "{{ backup_immich_dump_path }}"
+echo "Immich database dump complete."
+
+# Dump Paperless PostgreSQL database
+echo "Dumping Paperless database..."
+docker exec paperless-db pg_dump -U paperless paperless > "{{ backup_paperless_dump_path }}"
+echo "Paperless database dump complete."
+
+# --- Local backup ---
+echo "Starting local backup..."
+source {{ backup_config_dir }}/restic-env-local
+
+restic backup \
+{% for path in backup_paths %}
+  {{ path }} \
+{% endfor %}
+  --verbose
+
+restic forget \
+  --keep-daily {{ backup_retention.keep_daily }} \
+  --keep-weekly {{ backup_retention.keep_weekly }} \
+  --keep-monthly {{ backup_retention.keep_monthly }} \
+  --prune
+
+echo "Local backup complete."
+
+{% if backup_b2_account_id | length > 0 %}
+# --- B2 offsite backup ---
+echo "Starting B2 offsite backup..."
+source {{ backup_config_dir }}/restic-env-b2
+
+restic backup \
+{% for path in backup_paths %}
+  {{ path }} \
+{% endfor %}
+  --verbose
+
+restic forget \
+  --keep-daily {{ backup_retention.keep_daily }} \
+  --keep-weekly {{ backup_retention.keep_weekly }} \
+  --keep-monthly {{ backup_retention.keep_monthly }} \
+  --prune
+
+echo "B2 offsite backup complete."
+{% endif %}
+
+echo "========================================="
+echo "Backup finished: $(date -Iseconds)"
+echo "========================================="
+{% if backup_healthcheck_url | length > 0 %}
+
+curl -fsS --retry 3 "{{ backup_healthcheck_url }}" > /dev/null
+{% endif %}

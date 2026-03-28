@@ -1,0 +1,11 @@
+[Unit]
+Description=Minecraft IP whitelist service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 {{ minecraft_data_dir }}/mc-whitelist.py
+Restart=on-failure
+User={{ minecraft_user }}
+
+[Install]
+WantedBy=multi-user.target

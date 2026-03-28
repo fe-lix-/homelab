@@ -1,0 +1,40 @@
+---
+services:
+  mediathekarr:
+    image: mediathekarr-local:latest
+    container_name: mediathekarr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ mediathekarr_port }}:5007"
+    volumes:
+      - "{{ mediathekarr_downloads_dir }}:/data/mediathek"
+      - "{{ mediathekarr_data_dir }}/entrypoint.sh:/entrypoint.sh:ro"
+    environment:
+      TZ: "{{ timezone }}"
+      PUID: "{{ mediathekarr_uid }}"
+      PGID: "{{ mediathekarr_gid }}"
+      DOWNLOAD_FOLDER_PATH_MAPPING: "/downloads/mediathekarr"
+      DOWNLOAD_FOLDER: "/data/mediathek"
+      ASPNETCORE_FORWARDEDHEADERS_ENABLED: "true"
+    cap_add:
+      - NET_ADMIN
+    entrypoint: ["/entrypoint.sh"]
+    networks:
+      vlan30:
+        ipv4_address: "{{ mediathekarr_vlan_ip }}"
+      default:
+      arr:
+
+networks:
+  vlan30:
+    name: vlan30
+    driver: macvlan
+    driver_opts:
+      parent: "{{ mediathekarr_vlan_interface }}.{{ mediathekarr_vlan_id }}"
+    ipam:
+      config:
+        - subnet: "{{ mediathekarr_vlan_subnet }}"
+          gateway: "{{ mediathekarr_vlan_gateway }}"
+  arr:
+    name: arr
+    external: true

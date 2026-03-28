@@ -1,0 +1,46 @@
+---
+backup_restic_password: "CHANGE_ME"
+backup_local_repo: /srv/backups/restic
+backup_b2_bucket: "YOUR_B2_BUCKET_NAME"
+backup_b2_account_id: ""
+backup_b2_account_key: ""
+backup_config_dir: /opt/backup
+backup_immich_dump_path: /opt/immich/db-dump.sql
+backup_paperless_dump_path: /opt/paperless/db-dump.sql
+backup_paths:
+  - /opt/komga/config
+  - /opt/jellyfin/config
+  - /opt/sonarr/config
+  - /opt/radarr/config
+  - /opt/lidarr/config
+  - /opt/bazarr/config
+  - /opt/prowlarr/config
+  - /opt/qbittorrent/config
+  - /opt/audiobookshelf/config
+  - /opt/audiobookshelf/metadata
+  - /opt/homeassistant/config
+  - /opt/mediathekarr
+  - /opt/joynarr/app
+  - /opt/goploader/config
+  - /opt/goploader/data
+  - /opt/uptime-kuma/data
+  - /opt/authelia/config
+  - /opt/authelia/data
+  - /opt/lldap/data
+  - /opt/monitoring
+  - /opt/homepage/config
+  - /opt/nginx/conf.d
+  - /opt/immich/db-dump.sql
+  - /opt/paperless/consume
+  - /opt/paperless/db-dump.sql
+  - /srv/paperless
+  - /opt/pihole/config
+  - /opt/minecraft/data
+  - /srv/photos
+backup_retention:
+  keep_daily: 7
+  keep_weekly: 4
+  keep_monthly: 6
+backup_schedule: "*-*-* 03:00:00"
+backup_log_file: /var/log/restic-backup.log
+backup_healthcheck_url: ""

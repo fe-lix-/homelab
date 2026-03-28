@@ -1,0 +1,29 @@
+---
+- name: Create Goploader directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ goploader_data_dir }}"
+    - "{{ goploader_data_dir }}/config"
+    - "{{ goploader_data_dir }}/data"
+
+- name: Deploy Goploader config
+  ansible.builtin.template:
+    src: conf.yml.j2
+    dest: "{{ goploader_data_dir }}/config/conf.yml"
+    mode: "0644"
+  notify: Restart goploader
+
+- name: Deploy Goploader docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ goploader_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart goploader
+
+- name: Start Goploader
+  community.docker.docker_compose_v2:
+    project_src: "{{ goploader_data_dir }}"
+    state: present

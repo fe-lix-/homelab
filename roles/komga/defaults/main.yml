@@ -1,0 +1,9 @@
+---
+komga_version: "1.24.1"
+komga_port: 25600
+komga_data_dir: /opt/komga
+komga_library_dir: /srv/comics
+komga_user: svc-media
+komga_admin_email: ""
+komga_admin_password: ""
+authelia_komga_oidc_secret: "CHANGE_ME"

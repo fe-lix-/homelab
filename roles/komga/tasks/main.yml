@@ -1,0 +1,68 @@
+---
+- name: Look up komga user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ komga_user }}"
+
+- name: Set komga uid/gid facts
+  ansible.builtin.set_fact:
+    komga_uid: "{{ ansible_facts['getent_passwd'][komga_user][1] }}"
+    komga_gid: "{{ ansible_facts['getent_passwd'][komga_user][2] }}"
+
+- name: Create Komga directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ komga_user }}"
+    mode: "0755"
+  loop:
+    - "{{ komga_data_dir }}"
+    - "{{ komga_data_dir }}/config"
+
+- name: Deploy Komga application config
+  ansible.builtin.template:
+    src: application.yml.j2
+    dest: "{{ komga_data_dir }}/config/application.yml"
+    owner: "{{ komga_user }}"
+    mode: "0600"
+  no_log: true
+  notify: Restart komga
+
+- name: Deploy Komga docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ komga_data_dir }}/docker-compose.yml"
+    owner: "{{ komga_user }}"
+    mode: "0644"
+  notify: Restart komga
+
+- name: Start Komga
+  community.docker.docker_compose_v2:
+    project_src: "{{ komga_data_dir }}"
+    state: present
+
+- name: Wait for Komga to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ komga_port }}/api/v1/login"
+    status_code: [200, 401, 405]
+  register: komga_health
+  retries: 10
+  delay: 3
+  until: komga_health.status in [200, 401, 405]
+  when: komga_admin_email | length > 0
+
+- name: Deploy Komga user provisioning script
+  ansible.builtin.template:
+    src: provision-users.py.j2
+    dest: "{{ komga_data_dir }}/provision-users.py"
+    mode: "0700"
+  no_log: true
+  when: komga_admin_email | length > 0
+
+- name: Provision Komga users
+  ansible.builtin.command:
+    cmd: python3 {{ komga_data_dir }}/provision-users.py
+  register: komga_provision_result
+  changed_when: "'CHANGED' in komga_provision_result.stdout"
+  no_log: true
+  when: komga_admin_email | length > 0

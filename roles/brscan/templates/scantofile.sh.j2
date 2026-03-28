@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# brscan-skey calls this when the scan button is pressed.
+# Detach a background job via setsid so it survives after brscan-skey is stopped.
+TMPDIR="$(mktemp -d /tmp/scan_XXXXXX)"
+FILENAME="{{ brscan_consume_dir }}/scan_$(date +%Y%m%d_%H%M%S).pdf"
+setsid bash -c "
+    # Close inherited fds 3-20 to release the lockfile flock inherited from
+    # brscan-skey-exe via fork/exec. Without this, the brother5 SANE backend
+    # gets LOCK_EWOULDBLOCK and crashes with a C++ null pointer error.
+    for fd in 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20; do
+        eval \"exec \${fd}>&-\"
+    done 2>/dev/null
+    pkill -KILL -x brscan-skey-exe
+    sleep 2
+    rm -f /tmp/brother_lockfile_saneskey_jhsga2shuioahja9kaf3dfsfdlsdfjbgfkj
+    # Scan all ADF pages to separate TIFFs. Exit code 7 = ADF empty (normal).
+    # env -i: systemd env lacks HOME and SANE_CONFIG_DIR, causing brother5 crash.
+    env -i HOME=/root PATH=/usr/bin:/usr/sbin:/bin:/sbin SANE_CONFIG_DIR=/etc/sane.d \
+        scanimage -d '{{ brscan_brother5_device }}' \
+        --source='Automatic Document Feeder(left aligned)' \
+        --format=tiff --resolution=300 --batch='$TMPDIR/page_%04d.tiff'
+    SCAN_RC=\$?
+    if [ \$SCAN_RC -eq 0 ] || [ \$SCAN_RC -eq 7 ]; then
+        if img2pdf '$TMPDIR'/page_*.tiff -o '$FILENAME' 2>/dev/null; then
+            chmod 644 '$FILENAME'
+        fi
+    fi
+    rm -rf '$TMPDIR'
+" &

@@ -1,0 +1,5 @@
+---
+- name: Restart qbittorrent
+  community.docker.docker_compose_v2:
+    project_src: "{{ qbittorrent_data_dir }}"
+    state: restarted

@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Khazad-dûm</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;700&family=Crimson+Text:ital,wght@0,400;1,400&display=swap');
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: 'Crimson Text', Georgia, serif;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background: #0a0806;
+            color: #c8b99a;
+            overflow: hidden;
+        }
+
+        /* Subtle stone texture via radial gradients */
+        body::before {
+            content: '';
+            position: fixed;
+            inset: 0;
+            background:
+                radial-gradient(ellipse 80% 60% at 50% 100%, #1a0e05 0%, transparent 70%),
+                radial-gradient(ellipse 60% 40% at 20% 50%, #120d08 0%, transparent 60%),
+                radial-gradient(ellipse 60% 40% at 80% 50%, #120d08 0%, transparent 60%);
+            pointer-events: none;
+        }
+
+        /* Faint rune ring */
+        body::after {
+            content: 'ᚦᚢᛗᚹᚨᚱᚾᛈᛖᚱᚦᚢᛗᚹᚨᚱᚾᛈᛖᚱᚦᚢᛗᚹᚨᚱᚾᛈᛖᚱᚦᚢᛗᚹᚨᚱᚾᛈᛖ';
+            position: fixed;
+            font-size: 0.65rem;
+            letter-spacing: 0.55em;
+            color: #3a2a18;
+            width: 460px;
+            height: 460px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 50%;
+            border: 1px solid #2a1c0e;
+            text-align: center;
+            word-break: break-all;
+            padding: 1rem;
+            pointer-events: none;
+        }
+
+        .container {
+            position: relative;
+            text-align: center;
+            padding: 3rem 2.5rem;
+            max-width: 500px;
+            z-index: 1;
+        }
+
+        .gate-symbol {
+            font-size: 3.5rem;
+            margin-bottom: 1.25rem;
+            opacity: 0.55;
+            filter: sepia(1) brightness(0.6);
+            display: block;
+        }
+
+        h1 {
+            font-family: 'Cinzel', 'Trajan Pro', serif;
+            font-size: 2.2rem;
+            font-weight: 700;
+            letter-spacing: 0.12em;
+            color: #d4a843;
+            text-shadow: 0 0 30px rgba(180, 120, 20, 0.4), 0 0 60px rgba(180, 120, 20, 0.15);
+            margin-bottom: 0.3rem;
+        }
+
+        .subtitle {
+            font-family: 'Cinzel', serif;
+            font-size: 0.8rem;
+            letter-spacing: 0.3em;
+            color: #7a6040;
+            text-transform: uppercase;
+            margin-bottom: 2rem;
+        }
+
+        .divider {
+            width: 120px;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #5a3e1e, transparent);
+            margin: 0 auto 2rem;
+        }
+
+        p {
+            font-size: 1.15rem;
+            font-style: italic;
+            color: #9a8060;
+            line-height: 1.7;
+            margin-bottom: 0.5rem;
+        }
+
+        .hint {
+            font-size: 0.9rem;
+            font-style: normal;
+            color: #4a3825;
+            margin-top: 2rem;
+            letter-spacing: 0.05em;
+        }
+
+        .hint a {
+            color: #7a5c2e;
+            text-decoration: none;
+            border-bottom: 1px solid #4a3825;
+        }
+
+        .hint a:hover {
+            color: #d4a843;
+            border-bottom-color: #d4a843;
+        }
+
+        /* Dwarf star (six-pointed) as ornament */
+        .ornament {
+            display: block;
+            color: #3a2a12;
+            font-size: 1.1rem;
+            margin: 1.5rem auto 0;
+            letter-spacing: 1em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <span class="gate-symbol">⛏</span>
+        <h1>Khazad-dûm</h1>
+        <div class="subtitle">The Mines of Moria &mdash; Private Homelab</div>
+        <div class="divider"></div>
+        <p>These halls are not open to the outside world.</p>
+        <p>Services dwell deep within, beyond the Gate.</p>
+        <p class="hint">If you received a shared link, it will lead you true.</p>
+        <span class="ornament">✦ ✦ ✦</span>
+    </div>
+</body>
+</html>

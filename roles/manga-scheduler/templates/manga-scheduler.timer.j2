@@ -1,0 +1,10 @@
+[Unit]
+Description=Run manga-scheduler every 2 days
+
+[Timer]
+OnCalendar={{ manga_scheduler_schedule }}
+Persistent=true
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

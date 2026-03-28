@@ -1,0 +1,52 @@
+---
+- name: Create Nginx directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ nginx_data_dir }}"
+    - "{{ nginx_data_dir }}/conf.d"
+
+- name: Deploy Nginx docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ nginx_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart nginx
+
+- name: Deploy Nginx static pages
+  ansible.builtin.copy:
+    src: "../templates/{{ item }}"
+    dest: "{{ nginx_data_dir }}/{{ item }}"
+    mode: "0644"
+  loop:
+    - 403.html
+    - landing.html
+    - mc-forbidden.html
+    - favicon.svg
+  notify: Restart nginx
+
+- name: Deploy Nginx configuration
+  ansible.builtin.template:
+    src: default.conf.j2
+    dest: "{{ nginx_data_dir }}/conf.d/default.conf"
+    mode: "0644"
+  notify: Restart nginx
+
+- name: Start Nginx
+  community.docker.docker_compose_v2:
+    project_src: "{{ nginx_data_dir }}"
+    state: present
+
+- name: Allow HTTPS through UFW
+  community.general.ufw:
+    rule: allow
+    port: "{{ nginx_port | string }}"
+    proto: tcp
+
+- name: Allow HTTP through UFW (redirect to HTTPS)
+  community.general.ufw:
+    rule: allow
+    port: "80"
+    proto: tcp

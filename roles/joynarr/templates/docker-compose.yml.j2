@@ -1,0 +1,27 @@
+---
+services:
+  joynarr:
+    build: ./app
+    container_name: joynarr
+    restart: unless-stopped
+    user: "{{ joynarr_uid }}:{{ joynarr_gid }}"
+    ports:
+      - "127.0.0.1:{{ joynarr_indexer_port }}:5008"
+      - "127.0.0.1:{{ joynarr_downloader_port }}:5007"
+    volumes:
+      - "{{ joynarr_downloads_dir }}:/app/downloads"
+    environment:
+      TZ: "{{ timezone }}"
+      INDEXER_PORT: "5008"
+      DOWNLOADER_PORT: "5007"
+      DOWNLOAD_FOLDER_PATH_MAPPING: "/downloads"
+      TVDB_API_BASE_URL: "{{ joynarr_tvdb_api_base_url }}"
+      BRIGHTDATA_PROXY_URL: "{{ joynarr_sock5_proxy_url }}"
+    networks:
+      - default
+      - arr
+
+networks:
+  arr:
+    name: arr
+    external: true

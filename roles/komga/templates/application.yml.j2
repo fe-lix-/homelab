@@ -1,0 +1,17 @@
+spring:
+  security:
+    oauth2:
+      client:
+        registration:
+          authelia:
+            provider: authelia
+            client-id: komga
+            client-secret: "{{ authelia_komga_oidc_secret }}"
+            client-name: Authelia
+            scope: openid,email,profile
+            authorization-grant-type: authorization_code
+            redirect-uri: "https://comics.{{ base_domain }}/login/oauth2/code/authelia"
+        provider:
+          authelia:
+            issuer-uri: "https://auth.{{ base_domain }}"
+            user-name-attribute: preferred_username

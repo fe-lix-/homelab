@@ -1,0 +1,30 @@
+#!/bin/bash
+# Start the real Minecraft server.
+# Called by mc-fake-server.py when a player attempts to connect.
+set -euo pipefail
+
+LOCK="{{ minecraft_data_dir }}/mc-starting.lock"
+READY_FLAG="{{ minecraft_data_dir }}/mc-ready.flag"
+COMPOSE_DIR="{{ minecraft_data_dir }}"
+
+exec >> /var/log/mc-start.log 2>&1
+echo "$(date -Iseconds) mc-start.sh: triggered"
+
+touch "$LOCK"
+
+echo "$(date -Iseconds) Starting Minecraft..."
+cd "$COMPOSE_DIR"
+docker compose up -d
+
+echo "$(date -Iseconds) Waiting for RCON (up to 5 min)..."
+for i in $(seq 60); do
+    sleep 5
+    if docker exec minecraft rcon-cli list &>/dev/null; then
+        echo "$(date -Iseconds) RCON ready after $((i * 5))s"
+        break
+    fi
+done
+
+touch "$READY_FLAG"
+rm -f "$LOCK"
+echo "$(date -Iseconds) mc-start.sh: done"

@@ -1,0 +1,313 @@
+---
+theme: dark
+
+server:
+  address: "tcp://0.0.0.0:9091"
+
+log:
+  level: info
+
+totp:
+  issuer: "{{ base_domain }}"
+
+authentication_backend:
+  # LDAP backend via LLDAP. The svc-authelia bind user must be created
+  # manually in the LLDAP web UI (https://lldap.{{ base_domain }}) after the
+  # first deployment of the lldap role.
+  ldap:
+    address: "ldap://lldap:3890"
+    base_dn: "{{ lldap_base_dn }}"
+    username_attribute: uid
+    mail_attribute: mail
+    display_name_attribute: cn
+    groups_filter: "(member={dn})"
+    group_name_attribute: cn
+    user: "{{ lldap_bind_dn }}"
+    password: "{{ lldap_bind_password }}"
+    users_filter: "(&({username_attribute}={input})(objectClass=person))"
+
+session:
+  secret: "{{ authelia_session_secret }}"
+  cookies:
+    - domain: "{{ base_domain }}"
+      authelia_url: "https://auth.{{ base_domain }}"
+      inactivity: 7d
+      expiration: 7d
+      remember_me: 30d
+  redis:
+    host: authelia-redis
+    port: 6379
+
+storage:
+  encryption_key: "{{ authelia_storage_encryption_key }}"
+  local:
+    path: /data/db.sqlite3
+
+notifier:
+  filesystem:
+    filename: /data/notification.txt
+
+regulation:
+  max_retries: 5
+  find_time: '2m'
+  ban_time: '10m'
+
+identity_validation:
+  reset_password:
+    jwt_secret: "{{ authelia_jwt_secret }}"
+
+identity_providers:
+  oidc:
+    hmac_secret: "{{ authelia_oidc_hmac_secret }}"
+    jwks:
+      - key_id: main
+        algorithm: RS256
+        use: sig
+        key: |
+          {{ oidc_key_content.content | b64decode | indent(10) }}
+    authorization_policies:
+      jellyfin_policy:
+        default_policy: deny
+        rules:
+          - policy: one_factor
+            subject:
+              - 'group:jellyfin'
+              - 'group:admin'
+      audiobook_policy:
+        default_policy: deny
+        rules:
+          - policy: one_factor
+            subject:
+              - 'group:audiobook'
+              - 'group:admin'
+      photo_policy:
+        default_policy: deny
+        rules:
+          - policy: one_factor
+            subject:
+              - 'group:photo'
+              - 'group:admin'
+      komga_policy:
+        default_policy: deny
+        rules:
+          - policy: one_factor
+            subject:
+              - 'group:comics'
+              - 'group:admin'
+      grafana_policy:
+        default_policy: deny
+        rules:
+          - policy: one_factor
+            subject:
+              - 'group:grafana'
+              - 'group:admin'
+    cors:
+      endpoints:
+        - authorization
+        - token
+        - userinfo
+        - revocation
+        - introspection
+      allowed_origins_from_client_redirect_uris: true
+    clients:
+      - client_id: grafana
+        client_name: Grafana
+        client_secret: "$plaintext${{ authelia_grafana_oidc_secret }}"
+        redirect_uris:
+          - "https://grafana.{{ base_domain }}/login/generic_oauth"
+        scopes:
+          - openid
+          - email
+          - profile
+          - groups
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        authorization_policy: grafana_policy
+        consent_mode: implicit
+
+      - client_id: immich
+        client_name: Immich
+        client_secret: "$plaintext${{ authelia_immich_oidc_secret }}"
+        redirect_uris:
+          - "https://photos.{{ base_domain }}/auth/login"
+          - "https://photos.{{ base_domain }}/user-settings"
+          - "app.immich:///oauth-callback"
+        scopes:
+          - openid
+          - email
+          - profile
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: client_secret_post
+        authorization_policy: photo_policy
+        consent_mode: implicit
+
+      - client_id: komga
+        client_name: Komga
+        client_secret: "$plaintext${{ authelia_komga_oidc_secret }}"
+        redirect_uris:
+          - "https://comics.{{ base_domain }}/login/oauth2/code/authelia"
+        scopes:
+          - openid
+          - email
+          - profile
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        authorization_policy: komga_policy
+        consent_mode: implicit
+
+      - client_id: audiobookshelf
+        client_name: Audiobookshelf
+        client_secret: "$plaintext${{ authelia_audiobookshelf_oidc_secret }}"
+        redirect_uris:
+          - "https://audiobooks.{{ base_domain }}/auth/openid/callback"
+          - "https://audiobooks.{{ base_domain }}/audiobookshelf/auth/openid/callback"
+        scopes:
+          - openid
+          - email
+          - profile
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        authorization_policy: audiobook_policy
+        consent_mode: implicit
+
+      - client_id: jellyfin
+        client_name: Jellyfin
+        client_secret: "$plaintext${{ authelia_jellyfin_oidc_secret }}"
+        token_endpoint_auth_method: client_secret_post
+        redirect_uris:
+          - "https://jellyfin.{{ base_domain }}/sso/OID/r/authelia"
+          - "https://jellyfin.{{ base_domain }}/sso/OID/redirect/authelia"
+        scopes:
+          - openid
+          - email
+          - profile
+          - groups
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        authorization_policy: jellyfin_policy
+        consent_mode: implicit
+
+access_control:
+  default_policy: deny
+  rules:
+    - domain: "auth.{{ base_domain }}"
+      policy: bypass
+
+    # Arr API endpoints — bypass for external API clients (e.g. apps, scripts)
+    - domain:
+        - "sonarr.{{ base_domain }}"
+        - "radarr.{{ base_domain }}"
+        - "lidarr.{{ base_domain }}"
+        - "prowlarr.{{ base_domain }}"
+        - "bazarr.{{ base_domain }}"
+      resources:
+        - "^/api.*"
+      policy: bypass
+
+    - domain:
+        - "joynarr.{{ base_domain }}"
+      resources:
+        - "^/api.*"
+        - "^/download/api.*"
+      policy: bypass
+
+    # LLDAP — any authenticated user (self-service profile editing)
+    - domain: "lldap.{{ base_domain }}"
+      policy: one_factor
+
+    # Admin-only services
+    - domain:
+        - "uptime.{{ base_domain }}"
+        - "docs.{{ base_domain }}"
+        - "pihole.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:admin"
+
+    - domain: "comics.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:comics"
+        - "group:admin"
+
+    # Arr stack (sonarr, radarr, lidarr, prowlarr, bazarr, mediathek, joynarr)
+    - domain:
+        - "sonarr.{{ base_domain }}"
+        - "radarr.{{ base_domain }}"
+        - "lidarr.{{ base_domain }}"
+        - "prowlarr.{{ base_domain }}"
+        - "bazarr.{{ base_domain }}"
+        - "mediathek.{{ base_domain }}"
+        - "joynarr.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:arr-stack"
+        - "group:admin"
+
+    # Torrent client
+    - domain:
+        - "torrent.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:torrent"
+        - "group:admin"
+
+    # Audiobooks
+    - domain:
+        - "audiobooks.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:audiobook"
+        - "group:admin"
+
+    # File sharing (Goploader)
+    - domain:
+        - "files.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:filesharing"
+        - "group:admin"
+
+    # Grafana
+    - domain:
+        - "grafana.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:grafana"
+        - "group:admin"
+
+    # Jellyfin
+    - domain:
+        - "jellyfin.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:jellyfin"
+        - "group:admin"
+
+    # Photos (Immich)
+    - domain:
+        - "photos.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:photo"
+        - "group:admin"
+
+    # Minecraft IP whitelist portal
+    - domain: "{{ base_domain }}"
+      resources:
+        - "^/minecraft$"
+      policy: one_factor
+      subject:
+        - "group:minecraft"
+        - "group:admin"

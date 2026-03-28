@@ -1,0 +1,15 @@
+---
+services:
+  bazarr:
+    image: lscr.io/linuxserver/bazarr:{{ bazarr_version }}
+    container_name: bazarr
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ bazarr_port }}:6767"
+    volumes:
+      - "{{ bazarr_data_dir }}/config:/config"
+      - "{{ bazarr_media_dir }}:/media"
+    environment:
+      PUID: "{{ bazarr_uid }}"
+      PGID: "{{ bazarr_gid }}"
+      TZ: "{{ timezone }}"

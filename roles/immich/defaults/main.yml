@@ -1,0 +1,7 @@
+---
+immich_version: release
+immich_port: 2283
+immich_data_dir: /opt/immich
+immich_photos_dir: /srv/photos
+immich_db_password: "CHANGE_ME"
+immich_user: svc-immich
