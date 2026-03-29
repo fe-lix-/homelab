@@ -8,7 +8,7 @@ case "$REPO" in
   local) source {{ backup_config_dir }}/restic-env-local ;;
   b2)    source {{ backup_config_dir }}/restic-env-b2 ;;
   *)
-    echo "Usage: $0 [local|b2] [snapshots|list SNAPSHOT|restore SNAPSHOT TARGET|restore-db SNAPSHOT]"
+    echo "Usage: $0 [local|b2] [snapshots|list SNAPSHOT|restore SNAPSHOT TARGET|restore-db SNAPSHOT|restore-service PATH [SNAPSHOT [TARGET]]]"
     exit 1
     ;;
 esac
@@ -36,8 +36,21 @@ case "$ACTION" in
     rm -rf "$TMPDIR"
     echo "Database restored successfully."
     ;;
+  restore-service)
+    PATH_FILTER="${3:?Service path required (e.g. /opt/minecraft/data)}"
+    SNAPSHOT="${4:-latest}"
+    TARGET="${5:-/}"
+    SERVICE_DIR=$(echo "$PATH_FILTER" | grep -oP '^/opt/[^/]+')
+    if [ -n "$SERVICE_DIR" ] && [ -f "$SERVICE_DIR/docker-compose.yml" ]; then
+      echo "Stopping $SERVICE_DIR..."
+      (cd "$SERVICE_DIR" && docker compose down)
+    fi
+    echo "Restoring $PATH_FILTER from snapshot $SNAPSHOT to $TARGET..."
+    restic restore "$SNAPSHOT" --target "$TARGET" --include "$PATH_FILTER"
+    echo "Done. Start the service manually: cd $SERVICE_DIR && docker compose up -d"
+    ;;
   *)
-    echo "Usage: $0 [local|b2] [snapshots|list SNAPSHOT|restore SNAPSHOT TARGET|restore-db SNAPSHOT]"
+    echo "Usage: $0 [local|b2] [snapshots|list SNAPSHOT|restore SNAPSHOT TARGET|restore-db SNAPSHOT|restore-service PATH [SNAPSHOT [TARGET]]]"
     exit 1
     ;;
 esac
