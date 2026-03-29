@@ -51,6 +51,11 @@ if [ -d "$TEXTFILE_DIR" ]; then
   printf '# HELP restic_backup_files_total Number of files in the latest snapshot\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
   printf '# TYPE restic_backup_files_total gauge\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
   printf 'restic_backup_files_total %s\n' "$FILES" >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf '# HELP restic_backup_path_size_bytes Disk usage of each backup source path and its immediate subdirectories\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
+  printf '# TYPE restic_backup_path_size_bytes gauge\n' >> "$TEXTFILE_DIR/restic.prom.tmp"
+{% for path in backup_paths %}
+  du -b --max-depth=1 "{{ path }}" 2>/dev/null | awk '{printf "restic_backup_path_size_bytes{path=\"%s\"} %s\n", $2, $1}' >> "$TEXTFILE_DIR/restic.prom.tmp"
+{% endfor %}
   mv "$TEXTFILE_DIR/restic.prom.tmp" "$TEXTFILE_DIR/restic.prom"
 fi
 
