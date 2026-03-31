@@ -7,6 +7,9 @@ import os
 import re
 import shutil
 import sys
+import urllib.error
+import urllib.request
+from base64 import b64encode
 from pathlib import Path
 
 UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
@@ -14,6 +17,10 @@ COMICS_DIR = Path("{{ manga_scheduler_comics_dir }}")
 DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
 TARGET_BYTES = {{ manga_scheduler_target_mb }} * 1024 * 1024
 STATE_FILE = DATA_DIR / "state.json"
+PENDING_FILE = DATA_DIR / "pending.txt"
+KOMGA_URL = "http://127.0.0.1:{{ komga_port }}"
+KOMGA_USER = "{{ komga_admin_email }}"
+KOMGA_PASSWORD = "{{ komga_admin_password }}"
 
 VOLUME_SUFFIX_RE = re.compile(
     r"\s*-\s*(Tomo|Vol\.?|Volume|Book)\s+\d+.*$", re.IGNORECASE
@@ -140,11 +147,46 @@ def move_files(
                     source_dir.rmdir()
 
 
+def scan_komga(dry_run: bool) -> None:
+    """Trigger a library scan on all Komga libraries."""
+    if dry_run:
+        print("[dry-run] Would trigger Komga library scan")
+        return
+    token = b64encode(f"{KOMGA_USER}:{KOMGA_PASSWORD}".encode()).decode()
+    headers = {"Authorization": f"Basic {token}"}
+    try:
+        req = urllib.request.Request(f"{KOMGA_URL}/api/v1/libraries", headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            libraries = json.load(resp)
+        for lib in libraries:
+            lib_id = lib["id"]
+            scan_req = urllib.request.Request(
+                f"{KOMGA_URL}/api/v1/libraries/{lib_id}/scan",
+                data=b"",
+                headers=headers,
+                method="POST",
+            )
+            urllib.request.urlopen(scan_req, timeout=10).close()
+            print(f"Triggered Komga scan for library: {lib['name']!r}")
+    except Exception as exc:
+        print(f"Warning: Komga scan failed: {exc}", file=sys.stderr)
+
+
+def consume_pending() -> str | None:
+    """Read and delete the pending series file set by the UI. Returns series name or None."""
+    if PENDING_FILE.exists():
+        name = PENDING_FILE.read_text().strip()
+        PENDING_FILE.unlink()
+        return name or None
+    return None
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manga Scheduler")
     parser.add_argument("--dry-run", action="store_true", help="Print actions without executing")
     parser.add_argument("--upload-dir", type=Path, default=UPLOAD_DIR, help="Override upload directory")
     parser.add_argument("--comics-dir", type=Path, default=COMICS_DIR, help="Override comics destination directory")
+    parser.add_argument("--series", metavar="NAME", help="Deliver this series now instead of the next round-robin pick")
     args = parser.parse_args()
 
     upload_dir: Path = args.upload_dir
@@ -167,7 +209,18 @@ def main() -> None:
         sys.exit(0)
 
     current_index = state.get("current_index", 0) % max(len(series_order), 1)
-    chosen_index, chosen_series = pick_series(series_order, current_index, discovered)
+
+    # Determine which series to deliver: CLI flag > pending file > round-robin
+    forced_series = args.series or consume_pending()
+    if forced_series:
+        if forced_series not in discovered:
+            print(f"Series {forced_series!r} not found in upload directory.", file=sys.stderr)
+            sys.exit(1)
+        chosen_series = forced_series
+        # Find its index so we can advance past it for the next auto-run
+        chosen_index = series_order.index(forced_series) if forced_series in series_order else current_index
+    else:
+        chosen_index, chosen_series = pick_series(series_order, current_index, discovered)
 
     if chosen_series is None:
         print("All series are empty. Nothing to do.")
@@ -181,6 +234,7 @@ def main() -> None:
     print(f"Moving {len(batch)} file(s) (~{total_mb:.1f} MB)")
 
     move_files(batch, chosen_series, comics_dir, upload_dir, args.dry_run)
+    scan_komga(args.dry_run)
 
     # Advance index for next run
     next_index = (chosen_index + 1) % len(series_order)

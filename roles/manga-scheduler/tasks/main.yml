@@ -41,3 +41,30 @@
     name: manga-scheduler.timer
     enabled: true
     state: started
+
+- name: Deploy manga-scheduler UI server
+  ansible.builtin.template:
+    src: manga-scheduler-ui.py.j2
+    dest: "{{ manga_scheduler_data_dir }}/manga-scheduler-ui.py"
+    owner: root
+    group: root
+    mode: "0700"
+  notify: Restart manga-scheduler-ui
+
+- name: Deploy manga-scheduler UI systemd service
+  ansible.builtin.template:
+    src: manga-scheduler-ui.service.j2
+    dest: /etc/systemd/system/manga-scheduler-ui.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start manga-scheduler-ui service
+  ansible.builtin.systemd:
+    name: manga-scheduler-ui.service
+    enabled: true
+    state: started

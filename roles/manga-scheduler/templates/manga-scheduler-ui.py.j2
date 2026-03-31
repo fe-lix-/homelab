@@ -1,0 +1,340 @@
+#!/usr/bin/env python3
+"""Manga Scheduler Web UI — manually trigger series delivery ahead of schedule."""
+
+import datetime
+import http.server
+import json
+import re
+import subprocess
+import urllib.parse
+from html import escape
+from pathlib import Path
+
+UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
+COMICS_DIR = Path("{{ manga_scheduler_comics_dir }}")
+DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
+STATE_FILE = DATA_DIR / "state.json"
+PENDING_FILE = DATA_DIR / "pending.txt"
+SCHEDULER_SCRIPT = DATA_DIR / "manga-scheduler.py"
+PORT = {{ manga_scheduler_ui_port }}
+{% raw %}
+COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
+
+VOLUME_SUFFIX_RE = re.compile(
+    r"\s*-\s*(Tomo|Vol\.?|Volume|Book)\s+\d+.*$", re.IGNORECASE
+)
+JOURNAL_LINE_RE = re.compile(r"^(\S+)\s+\S+\s+\S+\s+(.+)$")
+RUN_START_RE = re.compile(r"^Series: '(.+)' \(\d+ files? remaining\)$")
+MOVE_FILE_RE = re.compile(r"^Moving: .+ -> .+/(.+)$")
+
+
+def series_name_from_file(stem: str) -> str:
+    return VOLUME_SUFFIX_RE.sub("", stem).strip()
+
+
+def discover_series() -> dict:
+    """Return {series_name: [path, ...]} for files in UPLOAD_DIR."""
+    series: dict = {}
+    if not UPLOAD_DIR.is_dir():
+        return series
+    for entry in sorted(UPLOAD_DIR.iterdir()):
+        if entry.is_dir():
+            files = sorted(
+                f for f in entry.iterdir()
+                if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS
+            )
+            if files:
+                series[entry.name] = files
+        elif entry.is_file() and entry.suffix.lower() in COMIC_EXTENSIONS:
+            name = series_name_from_file(entry.stem)
+            series.setdefault(name, []).append(entry)
+    for name in series:
+        series[name] = sorted(series[name])
+    return series
+
+
+def load_state() -> dict:
+    if STATE_FILE.exists():
+        with STATE_FILE.open() as f:
+            return json.load(f)
+    return {"series_order": [], "current_index": 0}
+
+
+def get_delivery_log(lines: int = 500) -> list[dict]:
+    """Return parsed delivery runs from the systemd journal, newest first."""
+    try:
+        result = subprocess.run(
+            ["journalctl", "-u", "manga-scheduler.service",
+             "--no-pager", "-n", str(lines), "-o", "short-iso"],
+            capture_output=True, text=True, timeout=5
+        )
+        raw = result.stdout.strip()
+    except Exception:
+        return []
+
+    runs = []
+    current: dict | None = None
+
+    for line in raw.splitlines():
+        m = JOURNAL_LINE_RE.match(line)
+        if not m:
+            continue
+        timestamp_str, message = m.group(1), m.group(2)
+
+        series_m = RUN_START_RE.match(message)
+        if series_m:
+            if current:
+                runs.append(current)
+            try:
+                dt = datetime.datetime.fromisoformat(timestamp_str)
+                formatted = dt.strftime("%Y-%m-%d %H:%M")
+            except Exception:
+                formatted = timestamp_str
+            current = {"time": formatted, "series": series_m.group(1), "volumes": []}
+            continue
+
+        if current is None:
+            continue
+
+        move_m = MOVE_FILE_RE.match(message)
+        if move_m:
+            current["volumes"].append(move_m.group(1))
+
+    if current:
+        runs.append(current)
+
+    runs.reverse()
+    return runs
+
+
+def get_timer_info() -> dict:
+    """Get next/last run info from systemd."""
+    try:
+        result = subprocess.run(
+            ["systemctl", "show", "manga-scheduler.timer",
+             "--property=NextElapseUSecRealtime,LastTriggerUSec,ActiveState"],
+            capture_output=True, text=True, timeout=5
+        )
+        props = {}
+        for line in result.stdout.strip().splitlines():
+            k, _, v = line.partition("=")
+            props[k] = v
+        return props
+    except Exception:
+        return {}
+
+
+CSS = """
+body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #1a1a2e; color: #e0e0e0; }
+h1 { color: #a78bfa; }
+.info { background: #16213e; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; font-size: 0.9rem; }
+.info span { margin-right: 2rem; }
+table { width: 100%; border-collapse: collapse; }
+th { background: #16213e; padding: 0.6rem 1rem; text-align: left; color: #a78bfa; }
+td { padding: 0.6rem 1rem; border-bottom: 1px solid #2d2d4e; }
+tr.next td { background: #1e1e3f; }
+button { background: #7c3aed; color: white; border: none; padding: 0.4rem 0.9rem; border-radius: 4px; cursor: pointer; }
+button:hover { background: #6d28d9; }
+.success { background: #14532d; color: #86efac; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+.error { background: #7f1d1d; color: #fca5a5; padding: 0.75rem 1rem; border-radius: 6px; margin-bottom: 1rem; }
+.log-section { margin-top: 2rem; }
+.log-section h2 { color: #a78bfa; font-size: 1rem; margin-bottom: 0.5rem; }
+.log-scroll { max-height: 400px; overflow-y: auto; border: 1px solid #2d2d4e; border-radius: 6px; }
+.log-scroll table { margin: 0; }
+.log-scroll td { font-size: 0.85rem; vertical-align: top; }
+.log-scroll td.volumes { color: #a0aec0; font-size: 0.78rem; }
+.empty-log { color: #6b7280; font-size: 0.85rem; padding: 0.75rem 1rem; }
+"""
+
+
+def _render_delivery_log(runs: list[dict]) -> str:
+    if not runs:
+        return (
+            "  <div class='log-section'>\n"
+            "    <h2>Delivery Log</h2>\n"
+            "    <p class='empty-log'>No deliveries recorded yet.</p>\n"
+            "  </div>\n"
+        )
+    rows = []
+    for run in runs:
+        vols = ", ".join(escape(v) for v in run["volumes"]) or "—"
+        rows.append(
+            "<tr>"
+            "<td>" + escape(run["time"]) + "</td>"
+            "<td>" + escape(run["series"]) + "</td>"
+            "<td class='volumes'>" + vols + "</td>"
+            "</tr>"
+        )
+    return (
+        "  <div class='log-section'>\n"
+        "    <h2>Delivery Log</h2>\n"
+        "    <div class='log-scroll'>\n"
+        "      <table>\n"
+        "        <thead><tr><th>Time</th><th>Series</th><th>Volumes</th></tr></thead>\n"
+        "        <tbody>\n" + "\n".join(rows) + "\n        </tbody>\n"
+        "      </table>\n"
+        "    </div>\n"
+        "  </div>\n"
+    )
+
+
+def render_index(msg: str = "", error: bool = False) -> str:
+    series_map = discover_series()
+    state = load_state()
+    timer = get_timer_info()
+    delivery_runs = get_delivery_log()
+
+    series_order = state.get("series_order", [])
+    current_index = state.get("current_index", 0)
+    next_series = None
+    if series_order:
+        for offset in range(len(series_order)):
+            idx = (current_index + offset) % len(series_order)
+            name = series_order[idx]
+            if name in series_map:
+                next_series = name
+                break
+
+    next_run = timer.get("NextElapseUSecRealtime", "n/a")
+    last_run = timer.get("LastTriggerUSec", "n/a")
+
+    rows = []
+    for name, files in sorted(series_map.items()):
+        total_mb = sum(f.stat().st_size for f in files) / (1024 * 1024)
+        is_next = "\u2713" if name == next_series else ""
+        safe_name = escape(name)
+        row_class = ' class="next"' if name == next_series else ""
+        rows.append(
+            "<tr" + row_class + ">"
+            "<td>" + safe_name + "</td>"
+            "<td>" + str(len(files)) + "</td>"
+            "<td>" + "%.1f MB" % total_mb + "</td>"
+            "<td>" + is_next + "</td>"
+            "<td>"
+            "<form method='post' action='/deliver' onsubmit=\"return confirm('Deliver now: " + safe_name + "?')\">"
+            "<input type='hidden' name='series' value='" + safe_name + "'>"
+            "<button type='submit'>Deliver Now</button>"
+            "</form>"
+            "</td>"
+            "</tr>"
+        )
+
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='5'>No series in upload queue.</td></tr>"
+    msg_html = ""
+    if msg:
+        cls = "error" if error else "success"
+        msg_html = "<div class='" + cls + "'>" + escape(msg) + "</div>"
+
+    return (
+        "<!DOCTYPE html>\n"
+        "<html lang='en'>\n"
+        "<head>\n"
+        "  <meta charset='UTF-8'>\n"
+        "  <meta name='viewport' content='width=device-width, initial-scale=1'>\n"
+        "  <title>Manga Scheduler</title>\n"
+        "  <style>" + CSS + "</style>\n"
+        "</head>\n"
+        "<body>\n"
+        "  <h1>Manga Scheduler</h1>\n"
+        + msg_html +
+        "  <div class='info'>"
+        "    <span>Next auto-run: <strong>" + escape(next_run) + "</strong></span>"
+        "    <span>Last run: <strong>" + escape(last_run) + "</strong></span>"
+        "    <span>Next in queue: <strong>" + escape(next_series or "none") + "</strong></span>"
+        "  </div>\n"
+        "  <table>\n"
+        "    <thead><tr>"
+        "<th>Series</th><th>Files</th><th>Size</th><th>Next</th><th>Action</th>"
+        "</tr></thead>\n"
+        "    <tbody>\n" + rows_html + "\n    </tbody>\n"
+        "  </table>\n"
+        + _render_delivery_log(delivery_runs) +
+        "</body>\n"
+        "</html>"
+    )
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass  # suppress default access log noise
+
+    def send_html(self, html: str, status: int = 200):
+        body = html.encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def send_redirect(self, location: str):
+        self.send_response(303)
+        self.send_header("Location", location)
+        self.end_headers()
+
+    def send_json(self, data: dict, status: int = 200):
+        body = json.dumps(data, indent=2).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):
+        parsed = urllib.parse.urlparse(self.path)
+        params = urllib.parse.parse_qs(parsed.query)
+
+        if parsed.path == "/api/status":
+            series_map = discover_series()
+            state = load_state()
+            timer = get_timer_info()
+            self.send_json({
+                "series": {k: len(v) for k, v in series_map.items()},
+                "state": state,
+                "timer": timer,
+            })
+        elif parsed.path == "/":
+            msg = params.get("msg", [""])[0]
+            err = params.get("err", ["0"])[0] == "1"
+            self.send_html(render_index(msg, err))
+        else:
+            self.send_html("<h1>404</h1>", 404)
+
+    def do_POST(self):
+        if self.path != "/deliver":
+            self.send_html("<h1>404</h1>", 404)
+            return
+
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+        params = urllib.parse.parse_qs(body)
+        series = params.get("series", [""])[0].strip()
+
+        if not series:
+            self.send_redirect("/?msg=No+series+specified&err=1")
+            return
+
+        # Write pending file so the service delivers this specific series
+        PENDING_FILE.write_text(series)
+
+        # Start the service (synchronous for oneshot — waits for completion)
+        result = subprocess.run(
+            ["systemctl", "start", "manga-scheduler.service"],
+            capture_output=True, text=True, timeout=120
+        )
+
+        if result.returncode == 0:
+            msg = urllib.parse.quote("Delivered: " + series)
+            self.send_redirect("/?msg=" + msg)
+        else:
+            # Clean up pending file if service failed to start
+            if PENDING_FILE.exists():
+                PENDING_FILE.unlink()
+            err_msg = urllib.parse.quote("Failed to deliver '" + series + "': " + result.stderr.strip())
+            self.send_redirect("/?msg=" + err_msg + "&err=1")
+
+
+if __name__ == "__main__":
+    server = http.server.HTTPServer(("127.0.0.1", PORT), Handler)
+    print("Manga Scheduler UI listening on 127.0.0.1:" + str(PORT))
+    server.serve_forever()
+{% endraw %}

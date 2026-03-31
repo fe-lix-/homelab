@@ -2,3 +2,8 @@
 - name: Reload systemd
   ansible.builtin.systemd:
     daemon_reload: true
+
+- name: Restart manga-scheduler-ui
+  ansible.builtin.systemd:
+    name: manga-scheduler-ui.service
+    state: restarted
