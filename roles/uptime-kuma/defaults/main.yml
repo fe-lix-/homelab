@@ -10,6 +10,8 @@ uptime_kuma_monitors:
     url: "http://host-gateway:{{ homepage_port }}"
   - name: Komga
     url: "http://host-gateway:{{ komga_port }}"
+  - name: Manga Scheduler UI
+    url: "http://host-gateway:{{ manga_scheduler_ui_port }}"
   - name: Jellyfin
     url: "http://host-gateway:{{ jellyfin_port }}"
   - name: qBittorrent

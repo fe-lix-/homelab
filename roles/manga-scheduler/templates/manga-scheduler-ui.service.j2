@@ -1,0 +1,12 @@
+[Unit]
+Description=Manga Scheduler Web UI
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 {{ manga_scheduler_data_dir }}/manga-scheduler-ui.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

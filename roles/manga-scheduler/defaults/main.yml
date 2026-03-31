@@ -4,3 +4,4 @@ manga_scheduler_comics_dir: /srv/comics
 manga_scheduler_data_dir: /opt/manga-scheduler
 manga_scheduler_target_mb: 100
 manga_scheduler_schedule: "*-*-1/2 04:00:00"
+manga_scheduler_ui_port: 5010
