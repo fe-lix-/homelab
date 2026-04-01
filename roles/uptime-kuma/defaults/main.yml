@@ -55,6 +55,8 @@ uptime_kuma_monitors:
     type: tcp
     hostname: "{{ ansible_host }}"
     port: "{{ minecraft_port }}"
+  - name: ntfy
+    url: "http://host-gateway:{{ ntfy_port }}/v1/health"
   - name: Restic Backup
     type: push
     push_token: ""

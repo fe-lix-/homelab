@@ -1,0 +1,9 @@
+base-url: "https://ntfy.{{ base_domain }}"
+listen-http: ":80"
+cache-file: /var/lib/ntfy/cache.db
+cache-duration: 12h
+auth-file: /var/lib/ntfy/auth.db
+auth-default-access: deny-all
+behind-proxy: true
+log-level: info
+log-format: json

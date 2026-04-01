@@ -29,6 +29,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Minecraft | PaperMC 1.20.4 (offline mode, LAN only) | `YOUR_SERVER_IP:25565` (direct TCP, UFW-restricted to 10.0.0.0/8) |
 | Homepage | Dashboard | `homelab.example.com` |
 | manga-scheduler | Drip-feeds manga from `/srv/uploads/mangas` into Komga library every 2 days (systemd timer) | — |
+| ntfy | Push notification server (publicly accessible, ntfy built-in auth) | `ntfy.homelab.example.com` |
 
 ## Architecture
 
@@ -97,6 +98,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
    paperless_secret_key: ""               # openssl rand -hex 32
    vault_router_ssh_password: ""   # UniFi router root SSH password
    pihole_admin_password: ""
+   ntfy_admin_password: ""
    lldap_admin_password: ""
    lldap_jwt_secret: ""                   # openssl rand -hex 32
    lldap_bind_password: ""               # password for svc-authelia LDAP bind user (create manually in LLDAP UI)

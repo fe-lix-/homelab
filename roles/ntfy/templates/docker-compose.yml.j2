@@ -1,0 +1,14 @@
+---
+services:
+  ntfy:
+    image: binwiederhier/ntfy:{{ ntfy_version }}
+    container_name: ntfy
+    restart: unless-stopped
+    command: serve
+    ports:
+      - "127.0.0.1:{{ ntfy_port }}:80"
+    volumes:
+      - "{{ ntfy_data_dir }}/config/server.yml:/etc/ntfy/server.yml:ro"
+      - "{{ ntfy_data_dir }}/data:/var/lib/ntfy"
+    environment:
+      TZ: "{{ timezone }}"

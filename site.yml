@@ -64,6 +64,8 @@
       tags: minecraft
     - role: manga-scheduler
       tags: manga-scheduler
+    - role: ntfy
+      tags: ntfy
     - role: certbot
       tags: certbot
     - role: nginx
