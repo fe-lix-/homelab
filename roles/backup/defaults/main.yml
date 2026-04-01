@@ -36,6 +36,8 @@ backup_paths:
   - /srv/paperless
   - /opt/pihole/config
   - /opt/minecraft/data
+  - /opt/ntfy/config
+  - /opt/ntfy/data
   - /srv/photos
 backup_retention:
   keep_daily: 7

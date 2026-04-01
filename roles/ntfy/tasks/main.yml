@@ -1,0 +1,61 @@
+---
+- name: Create ntfy directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ ntfy_data_dir }}"
+    - "{{ ntfy_data_dir }}/config"
+    - "{{ ntfy_data_dir }}/data"
+
+- name: Deploy ntfy server config
+  ansible.builtin.template:
+    src: server.yml.j2
+    dest: "{{ ntfy_data_dir }}/config/server.yml"
+    mode: "0644"
+  notify: Restart ntfy
+
+- name: Deploy ntfy docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ ntfy_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart ntfy
+
+- name: Start ntfy
+  community.docker.docker_compose_v2:
+    project_src: "{{ ntfy_data_dir }}"
+    state: present
+
+- name: Wait for ntfy to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ ntfy_port }}/v1/health"
+    status_code: 200
+  register: ntfy_health
+  until: ntfy_health.status == 200
+  retries: 12
+  delay: 5
+
+- name: Check if ntfy admin user exists
+  ansible.builtin.command:
+    cmd: docker exec ntfy ntfy user list
+  register: ntfy_user_list
+  changed_when: false
+
+- name: Create ntfy admin user
+  ansible.builtin.command:
+    cmd: docker exec ntfy ntfy user add --role=admin admin
+  environment:
+    NTFY_PASSWORD: "{{ ntfy_admin_password }}"
+  when: "'admin' not in ntfy_user_list.stdout"
+  no_log: true
+
+- name: Sync ntfy admin user password
+  ansible.builtin.command:
+    cmd: docker exec ntfy ntfy user change-pass admin
+  environment:
+    NTFY_PASSWORD: "{{ ntfy_admin_password }}"
+  when: "'admin' in ntfy_user_list.stdout"
+  no_log: true
+  changed_when: false
