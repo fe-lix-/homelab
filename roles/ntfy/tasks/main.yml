@@ -27,6 +27,7 @@
   community.docker.docker_compose_v2:
     project_src: "{{ ntfy_data_dir }}"
     state: present
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Wait for ntfy to be ready
   ansible.builtin.uri:
@@ -36,19 +37,21 @@
   until: ntfy_health.status == 200
   retries: 12
   delay: 5
+  when: not ansible_check_mode
 
 - name: Check if ntfy admin user exists
   ansible.builtin.command:
     cmd: docker exec ntfy ntfy user list
   register: ntfy_user_list
   changed_when: false
+  when: not ansible_check_mode
 
 - name: Create ntfy admin user
   ansible.builtin.command:
     cmd: docker exec ntfy ntfy user add --role=admin admin
   environment:
     NTFY_PASSWORD: "{{ ntfy_admin_password }}"
-  when: "'admin' not in ntfy_user_list.stdout"
+  when: not ansible_check_mode and 'admin' not in ntfy_user_list.stdout
   no_log: true
 
 - name: Sync ntfy admin user password
@@ -56,6 +59,6 @@
     cmd: docker exec ntfy ntfy user change-pass admin
   environment:
     NTFY_PASSWORD: "{{ ntfy_admin_password }}"
-  when: "'admin' in ntfy_user_list.stdout"
+  when: not ansible_check_mode and 'admin' in ntfy_user_list.stdout
   no_log: true
   changed_when: false

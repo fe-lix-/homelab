@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-role collections vault-edit vault-create check diff logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router
+.PHONY: deploy deploy-role collections vault-edit vault-create check diff logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router generate-password
 
 -include .env
 export
@@ -84,6 +84,10 @@ mc-stop:
 # Force start Minecraft (proxy auto-routes to MC once it's up)
 mc-start:
 	ssh -i $(SSH_KEY) $(SSH_USER)@$(SERVER) "sudo /opt/minecraft/mc-start.sh"
+
+# Generate a random 32-character password
+generate-password:
+	@python3 -c "import secrets, string; print(secrets.token_urlsafe(32))"
 
 # Dump UniFi router config to /tmp/router-dump/
 dump-router:
