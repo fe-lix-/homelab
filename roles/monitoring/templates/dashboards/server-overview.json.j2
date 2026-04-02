@@ -503,7 +503,7 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "topk(15, restic_backup_path_size_bytes)",
-          "legendFormat": "{{path}}",
+          "legendFormat": "{{ '{{path}}' }}",
           "range": true
         }
       ]
