@@ -10,12 +10,18 @@ import urllib.parse
 from html import escape
 from pathlib import Path
 
+import os
+
 UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
 COMICS_DIR = Path("{{ manga_scheduler_comics_dir }}")
 DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
 STATE_FILE = DATA_DIR / "state.json"
 PENDING_FILE = DATA_DIR / "pending.txt"
 SCHEDULER_SCRIPT = DATA_DIR / "manga-scheduler.py"
+DOWNLOADER_SCRIPT = DATA_DIR / "manga-downloader.py"
+DOWNLOAD_STATUS_FILE = DATA_DIR / "download-status.json"
+DOWNLOAD_HISTORY_FILE = DATA_DIR / "download-history.json"
+DOWNLOAD_PID_FILE = DATA_DIR / "downloader.pid"
 PORT = {{ manga_scheduler_ui_port }}
 {% raw %}
 COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
@@ -124,6 +130,38 @@ def get_timer_info() -> dict:
         return {}
 
 
+def read_download_status() -> dict:
+    """Read the current download status, or return idle."""
+    if DOWNLOAD_STATUS_FILE.exists():
+        try:
+            return json.loads(DOWNLOAD_STATUS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {"state": "idle"}
+
+
+def read_download_history() -> list[dict]:
+    """Read the download history log."""
+    if DOWNLOAD_HISTORY_FILE.exists():
+        try:
+            return json.loads(DOWNLOAD_HISTORY_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
+def is_download_running() -> bool:
+    """Check if a download process is currently alive."""
+    if not DOWNLOAD_PID_FILE.exists():
+        return False
+    try:
+        pid = int(DOWNLOAD_PID_FILE.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (ValueError, ProcessLookupError, PermissionError):
+        return False
+
+
 CSS = """
 body { font-family: sans-serif; max-width: 900px; margin: 2rem auto; padding: 0 1rem; background: #1a1a2e; color: #e0e0e0; }
 h1 { color: #a78bfa; }
@@ -144,6 +182,31 @@ button:hover { background: #6d28d9; }
 .log-scroll td { font-size: 0.85rem; vertical-align: top; }
 .log-scroll td.volumes { color: #a0aec0; font-size: 0.78rem; }
 .empty-log { color: #6b7280; font-size: 0.85rem; padding: 0.75rem 1rem; }
+.dl-section { background: #16213e; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
+.dl-section h2 { color: #a78bfa; font-size: 1rem; margin-top: 0; margin-bottom: 0.75rem; }
+.dl-form { display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: end; }
+.dl-form label { font-size: 0.85rem; color: #a0aec0; }
+.dl-form input[type=text] { background: #1a1a2e; color: #e0e0e0; border: 1px solid #2d2d4e; border-radius: 4px; padding: 0.4rem 0.6rem; font-size: 0.9rem; }
+.dl-form input[name=url] { flex: 1; min-width: 300px; }
+.dl-form input[name=series] { width: 180px; }
+.dl-progress { margin-top: 1rem; }
+.dl-progress .status-line { font-size: 0.9rem; margin-bottom: 0.5rem; }
+.dl-progress .status-line strong { color: #a78bfa; }
+.dl-volumes { list-style: none; padding: 0; margin: 0.5rem 0; font-size: 0.85rem; }
+.dl-volumes li { padding: 0.2rem 0; }
+.dl-volumes .done { color: #86efac; }
+.dl-volumes .downloading { color: #fbbf24; }
+.dl-volumes .pending { color: #6b7280; }
+.dl-volumes .failed { color: #fca5a5; }
+.dl-errors { margin-top: 0.5rem; }
+.dl-errors li { color: #fca5a5; font-size: 0.85rem; }
+.dl-history { margin-top: 2rem; }
+.dl-history h2 { color: #a78bfa; font-size: 1rem; margin-bottom: 0.5rem; }
+.dl-history td.result-completed { color: #86efac; }
+.dl-history td.result-failed { color: #fca5a5; }
+.dl-history td.errors { color: #fca5a5; font-size: 0.78rem; }
+.retry-btn { background: #b45309; font-size: 0.78rem; padding: 0.2rem 0.6rem; }
+.retry-btn:hover { background: #92400e; }
 """
 
 
@@ -171,6 +234,143 @@ def _render_delivery_log(runs: list[dict]) -> str:
         "    <div class='log-scroll'>\n"
         "      <table>\n"
         "        <thead><tr><th>Time</th><th>Series</th><th>Volumes</th></tr></thead>\n"
+        "        <tbody>\n" + "\n".join(rows) + "\n        </tbody>\n"
+        "      </table>\n"
+        "    </div>\n"
+        "  </div>\n"
+    )
+
+
+def _render_download_section() -> str:
+    """Render the download form + active progress section."""
+    running = is_download_running()
+    status = read_download_status()
+
+    html = "  <div class='dl-section'>\n    <h2>Manga Downloader</h2>\n"
+
+    if running:
+        html += (
+            "    <form class='dl-form'>\n"
+            "      <div><label>URL</label><br>"
+            "<input type='text' name='url' disabled placeholder='Download in progress...'></div>\n"
+            "      <div><label>Series name</label><br>"
+            "<input type='text' name='series' disabled></div>\n"
+            "      <button type='submit' disabled>Downloading...</button>\n"
+            "    </form>\n"
+        )
+    else:
+        html += (
+            "    <form class='dl-form' method='post' action='/download'>\n"
+            "      <div><label>URL</label><br>"
+            "<input type='text' name='url' placeholder='https://tomosmanga.com/...' required></div>\n"
+            "      <div><label>Series name (optional)</label><br>"
+            "<input type='text' name='series' placeholder='Auto-detect'></div>\n"
+            "      <button type='submit'>Start Download</button>\n"
+            "    </form>\n"
+        )
+
+    # Progress area (populated by JS when running)
+    html += "    <div id='dl-progress' class='dl-progress'></div>\n"
+    html += "  </div>\n"
+
+    # JavaScript for polling
+    html += """  <script>
+  (function() {
+    var prog = document.getElementById('dl-progress');
+    var polling = null;
+    function update() {
+      fetch('/api/download-status').then(function(r) { return r.json(); }).then(function(d) {
+        if (d.state === 'idle') { prog.innerHTML = ''; return; }
+        var h = '<div class="status-line">Series: <strong>' + esc(d.series || '') + '</strong> &mdash; ';
+        if (d.state === 'running') {
+          h += '<span style="color:#fbbf24">' + esc(d.current || '') + '</span>';
+          h += ' (' + (d.completed || 0) + '/' + (d.total || 0) + ' volumes)';
+        } else if (d.state === 'completed') {
+          h += '<span style="color:#86efac">Completed</span>';
+          h += ' (' + (d.completed || 0) + '/' + (d.total || 0) + ' volumes)';
+        } else {
+          h += '<span style="color:#fca5a5">Failed</span>';
+        }
+        h += '</div>';
+        var vols = d.volumes || [];
+        if (vols.length > 0) {
+          h += '<ul class="dl-volumes">';
+          for (var i = 0; i < vols.length; i++) {
+            var v = vols[i];
+            var icon = v.state === 'done' ? '&#10003; ' : v.state === 'downloading' ? '&#8635; ' : v.state === 'failed' ? '&#10007; ' : '&#8226; ';
+            h += '<li class="' + esc(v.state) + '">' + icon + esc(v.name) + '</li>';
+          }
+          h += '</ul>';
+        }
+        var errs = d.errors || [];
+        if (errs.length > 0) {
+          h += '<ul class="dl-errors">';
+          for (var i = 0; i < errs.length; i++) h += '<li>' + esc(errs[i]) + '</li>';
+          h += '</ul>';
+        }
+        prog.innerHTML = h;
+        if (d.state !== 'running' && polling) { clearInterval(polling); polling = null; }
+      }).catch(function() {});
+    }
+    function esc(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+    update();
+    polling = setInterval(update, 5000);
+  })();
+  </script>
+"""
+    return html
+
+
+def _render_download_history() -> str:
+    """Render the download history table."""
+    history = read_download_history()
+    if not history:
+        return (
+            "  <div class='dl-history'>\n"
+            "    <h2>Download History</h2>\n"
+            "    <p class='empty-log'>No downloads yet.</p>\n"
+            "  </div>\n"
+        )
+    running = is_download_running()
+    rows = []
+    for entry in reversed(history):
+        started = entry.get("started", "")
+        try:
+            dt = datetime.datetime.fromisoformat(started)
+            started = dt.strftime("%Y-%m-%d %H:%M")
+        except Exception:
+            pass
+        state = entry.get("state", "unknown")
+        result_class = "result-completed" if state == "completed" else "result-failed"
+        count = str(entry.get("completed", 0)) + "/" + str(entry.get("total", 0))
+        errs = ", ".join(entry.get("errors", [])) or "-"
+        retry_html = ""
+        if state != "completed" and entry.get("url") and not running:
+            safe_url = escape(entry.get("url", ""))
+            safe_series = escape(entry.get("series", ""))
+            retry_html = (
+                "<form method='post' action='/download' style='display:inline'>"
+                "<input type='hidden' name='url' value='" + safe_url + "'>"
+                "<input type='hidden' name='series' value='" + safe_series + "'>"
+                "<button type='submit' class='retry-btn'>Retry</button>"
+                "</form>"
+            )
+        rows.append(
+            "<tr>"
+            "<td>" + escape(started) + "</td>"
+            "<td>" + escape(entry.get("series", "")) + "</td>"
+            "<td class='" + result_class + "'>" + escape(state) + "</td>"
+            "<td>" + escape(count) + "</td>"
+            "<td class='errors'>" + escape(errs) + "</td>"
+            "<td>" + retry_html + "</td>"
+            "</tr>"
+        )
+    return (
+        "  <div class='dl-history'>\n"
+        "    <h2>Download History</h2>\n"
+        "    <div class='log-scroll'>\n"
+        "      <table>\n"
+        "        <thead><tr><th>Date</th><th>Series</th><th>Result</th><th>Volumes</th><th>Errors</th><th></th></tr></thead>\n"
         "        <tbody>\n" + "\n".join(rows) + "\n        </tbody>\n"
         "      </table>\n"
         "    </div>\n"
@@ -242,6 +442,7 @@ def render_index(msg: str = "", error: bool = False) -> str:
         "    <span>Last run: <strong>" + escape(last_run) + "</strong></span>"
         "    <span>Next in queue: <strong>" + escape(next_series or "none") + "</strong></span>"
         "  </div>\n"
+        + _render_download_section() +
         "  <table>\n"
         "    <thead><tr>"
         "<th>Series</th><th>Files</th><th>Size</th><th>Next</th><th>Action</th>"
@@ -249,6 +450,7 @@ def render_index(msg: str = "", error: bool = False) -> str:
         "    <tbody>\n" + rows_html + "\n    </tbody>\n"
         "  </table>\n"
         + _render_delivery_log(delivery_runs) +
+        _render_download_history() +
         "</body>\n"
         "</html>"
     )
@@ -292,6 +494,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 "state": state,
                 "timer": timer,
             })
+        elif parsed.path == "/api/download-status":
+            status = read_download_status()
+            # If status says running but process is dead, mark as failed
+            if status.get("state") == "running" and not is_download_running():
+                status["state"] = "failed"
+                status["current"] = "Process died unexpectedly"
+            self.send_json(status)
+        elif parsed.path == "/api/download-history":
+            self.send_json(read_download_history())
         elif parsed.path == "/":
             msg = params.get("msg", [""])[0]
             err = params.get("err", ["0"])[0] == "1"
@@ -300,13 +511,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_html("<h1>404</h1>", 404)
 
     def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length).decode()
+        params = urllib.parse.parse_qs(body)
+
+        if self.path == "/download":
+            self._handle_download(params)
+            return
+
         if self.path != "/deliver":
             self.send_html("<h1>404</h1>", 404)
             return
 
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length).decode()
-        params = urllib.parse.parse_qs(body)
         series = params.get("series", [""])[0].strip()
 
         if not series:
@@ -331,6 +547,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 PENDING_FILE.unlink()
             err_msg = urllib.parse.quote("Failed to deliver '" + series + "': " + result.stderr.strip())
             self.send_redirect("/?msg=" + err_msg + "&err=1")
+
+
+    def _handle_download(self, params: dict):
+        url = params.get("url", [""])[0].strip()
+        series = params.get("series", [""])[0].strip()
+
+        if not url or not url.startswith("https://tomosmanga.com/"):
+            self.send_redirect("/?msg=" + urllib.parse.quote("Invalid URL: must start with https://tomosmanga.com/") + "&err=1")
+            return
+
+        if is_download_running():
+            self.send_redirect("/?msg=" + urllib.parse.quote("A download is already in progress.") + "&err=1")
+            return
+
+        cmd = [str(DATA_DIR / "venv" / "bin" / "python"), str(DOWNLOADER_SCRIPT), "--url", url]
+        if series:
+            cmd.extend(["--series", series])
+
+        subprocess.Popen(
+            cmd,
+            stdout=open(DATA_DIR / "downloader.log", "a"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+
+        msg = urllib.parse.quote("Download started" + (": " + series if series else ""))
+        self.send_redirect("/?msg=" + msg)
 
 
 if __name__ == "__main__":

@@ -96,6 +96,14 @@
     group: docs-rw
     mode: "0750"
 
+- name: Ensure /srv/homes parent directory exists
+  ansible.builtin.file:
+    path: /srv/homes
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 # --- One-time ownership migration ---
 # Run with: make deploy-role ROLE=storage -e migrate_srv_ownership=true
 # This recursively re-chowns existing files to the new service accounts.

@@ -1,7 +1,42 @@
 ---
+- name: Install p7zip for archive extraction
+  ansible.builtin.apt:
+    name: p7zip-full
+    state: present
+
+- name: Install python3-venv
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+
+- name: Create manga-downloader virtualenv
+  ansible.builtin.command:
+    cmd: python3 -m venv {{ manga_scheduler_data_dir }}/venv
+    creates: "{{ manga_scheduler_data_dir }}/venv/bin/python"
+
+- name: Install Python dependencies for manga-downloader
+  ansible.builtin.pip:
+    name:
+      - playwright
+    virtualenv: "{{ manga_scheduler_data_dir }}/venv"
+
+- name: Install Playwright Chromium browser
+  ansible.builtin.command:
+    cmd: "{{ manga_scheduler_data_dir }}/venv/bin/playwright install --with-deps chromium"
+  register: playwright_install
+  changed_when: "'downloaded' in playwright_install.stdout.lower()"
+
 - name: Create manga-scheduler data directory
   ansible.builtin.file:
     path: "{{ manga_scheduler_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Create manga-downloader staging directory
+  ansible.builtin.file:
+    path: "{{ manga_downloader_staging_dir }}"
     state: directory
     owner: root
     group: root
@@ -11,6 +46,14 @@
   ansible.builtin.template:
     src: manga-scheduler.py.j2
     dest: "{{ manga_scheduler_data_dir }}/manga-scheduler.py"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy manga-downloader script
+  ansible.builtin.template:
+    src: manga-downloader.py.j2
+    dest: "{{ manga_scheduler_data_dir }}/manga-downloader.py"
     owner: root
     group: root
     mode: "0700"
