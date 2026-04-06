@@ -4,6 +4,7 @@ samba_ro_group: samba-ro
 samba_guest_user: smbguest
 samba_upload_dir: /srv/uploads
 samba_share_path: /srv
+samba_homes_path: /srv/homes
 samba_users: []
 # samba_users:
 #   - name: YOUR_USERNAME

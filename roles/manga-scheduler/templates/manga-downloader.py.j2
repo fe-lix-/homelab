@@ -1,0 +1,651 @@
+#!{{ manga_scheduler_data_dir }}/venv/bin/python
+"""Manga Downloader — fetch manga volumes from tomosmanga.com via Fireload."""
+
+import argparse
+import json
+import os
+import re
+import signal
+import shutil
+import subprocess
+import sys
+import time
+import traceback
+import urllib.parse
+import urllib.request
+from datetime import datetime, timezone
+from pathlib import Path
+
+import random
+
+from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+
+BYPARR_URL = "http://127.0.0.1:{{ byparr_port }}/v1"
+BYPARR_TIMEOUT = 120000  # ms
+STAGING_DIR = Path("{{ manga_downloader_staging_dir }}")
+UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
+DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
+STATUS_FILE = DATA_DIR / "download-status.json"
+HISTORY_FILE = DATA_DIR / "download-history.json"
+PID_FILE = DATA_DIR / "downloader.pid"
+DELAY = {{ manga_downloader_delay }}
+{% raw %}
+COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
+OUO_LINK_RE = re.compile(r'href=["\']?(https://ouo\.io/[A-Za-z0-9]+)["\']?')
+SLUG_CLEANUP_RE = re.compile(r"-(?:completo|complete|full)$", re.IGNORECASE)
+OUO_TIMEOUT = 60000  # ms — max time to wait for ouo.io redirect
+
+
+# --- Status management ---
+
+def update_status(**fields):
+    """Atomically update the status file with the given fields."""
+    status = {}
+    if STATUS_FILE.exists():
+        try:
+            status = json.loads(STATUS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    status.update(fields)
+    tmp = STATUS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(status, indent=2))
+    os.rename(tmp, STATUS_FILE)
+
+
+def append_history(entry: dict):
+    """Append a completed download entry to the history file."""
+    history = []
+    if HISTORY_FILE.exists():
+        try:
+            history = json.loads(HISTORY_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    history.append(entry)
+    tmp = HISTORY_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(history, indent=2))
+    os.rename(tmp, HISTORY_FILE)
+
+
+# --- ByParr integration (used for tomosmanga + Fireload pages) ---
+
+def byparr_request(url: str, max_timeout: int = BYPARR_TIMEOUT) -> tuple[str, str]:
+    """POST to ByParr and return (rendered_html, final_url)."""
+    log(f"ByParr request: {url}")
+    payload = json.dumps({
+        "cmd": "request.get",
+        "url": url,
+        "maxTimeout": max_timeout,
+    }).encode()
+    req = urllib.request.Request(
+        BYPARR_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=max_timeout // 1000 + 30) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read().decode()[:500]
+        except Exception:
+            pass
+        raise RuntimeError(f"ByParr HTTP {e.code} for {url}: {body}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"ByParr connection error for {url}: {e.reason}") from e
+    if data.get("status") != "ok":
+        raise RuntimeError(f"ByParr error for {url}: {data.get('message', 'unknown')}")
+    solution = data["solution"]
+    log(f"ByParr response: status={solution.get('status')}, final_url={solution.get('url', url)[:80]}")
+    return solution.get("response", ""), solution.get("url", url)
+
+
+# --- ouo.io bypass (Playwright with human-like mouse movement) ---
+
+def _human_mouse_move(page, target_x: int, target_y: int, steps: int = 0):
+    """Move mouse to target with random intermediate points to appear human."""
+    vw = page.viewport_size["width"]
+    vh = page.viewport_size["height"]
+    # Start from a random position
+    x, y = random.randint(100, vw - 100), random.randint(100, vh - 100)
+    page.mouse.move(x, y)
+    # Move through 2-4 random waypoints before the target
+    waypoints = random.randint(2, 4)
+    for _ in range(waypoints):
+        # Drift towards target with some randomness
+        x += random.randint(-100, 100) + (target_x - x) // (waypoints + 1)
+        y += random.randint(-80, 80) + (target_y - y) // (waypoints + 1)
+        x = max(10, min(vw - 10, x))
+        y = max(10, min(vh - 10, y))
+        page.mouse.move(x, y)
+        time.sleep(random.uniform(0.05, 0.2))
+    # Final move to actual target
+    page.mouse.move(target_x, target_y)
+    time.sleep(random.uniform(0.1, 0.3))
+
+
+def _is_ouo_domain(url: str) -> bool:
+    """Check if a URL belongs to ouo.io or ouo.press."""
+    try:
+        host = urllib.parse.urlparse(url).hostname or ""
+        return host in ("ouo.io", "ouo.press", "www.ouo.io", "www.ouo.press")
+    except Exception:
+        return False
+
+
+def _ouo_remove_overlays_and_click(page) -> bool:
+    """Remove overlay iframes, find a button/form, and click it. Return True if clicked."""
+    # Dump debug info on first call
+    try:
+        page.screenshot(path=str(DATA_DIR / "ouo-debug.png"))
+        html_dump = page.content()
+        (DATA_DIR / "ouo-debug.html").write_text(html_dump[:50000])
+        log(f"Debug screenshot and HTML saved to {DATA_DIR}")
+    except Exception as e:
+        log(f"Debug dump failed: {e}")
+
+    # Remove ALL iframes and overlay divs that intercept pointer events
+    removed = page.evaluate("""
+        (() => {
+            let count = 0;
+            // Remove all iframes (ouo.io uses them as overlays)
+            document.querySelectorAll('iframe').forEach(el => { el.remove(); count++; });
+            // Remove divs with data-shb attribute (known overlay container)
+            document.querySelectorAll('div[data-shb]').forEach(el => { el.remove(); count++; });
+            // Remove any fixed/absolute positioned overlays covering the page
+            document.querySelectorAll('div').forEach(el => {
+                const style = window.getComputedStyle(el);
+                if ((style.position === 'fixed' || style.position === 'absolute') &&
+                    parseInt(style.zIndex) > 100 &&
+                    el.offsetWidth > 500 && el.offsetHeight > 300) {
+                    el.remove(); count++;
+                }
+            });
+            return count;
+        })()
+    """)
+    log(f"Removed {removed} overlay element(s)")
+    time.sleep(0.5)
+
+    button_selectors = [
+        "#btn-main",
+        "button:has-text('I\\'m human')",
+        "button:has-text('I am human')",
+        "button:has-text('Verify')",
+        "button:has-text('Continue')",
+        "form button[type='submit']",
+        "input[type='submit']",
+    ]
+
+    for selector in button_selectors:
+        try:
+            btn = page.wait_for_selector(selector, timeout=3000)
+            if btn and btn.is_visible():
+                box = btn.bounding_box()
+                if box:
+                    _human_mouse_move(page, int(box["x"] + box["width"] / 2),
+                                      int(box["y"] + box["height"] / 2))
+                # Use JS click directly — most reliable against overlays
+                btn.evaluate("el => el.click()")
+                log(f"Clicked (JS): {selector}")
+                return True
+        except PlaywrightTimeout:
+            continue
+
+    # Fallback: JS form submit
+    submitted = page.evaluate("""
+        (() => { const f = document.querySelector('form');
+                 if (f) { f.submit(); return true; }
+                 return false; })()
+    """)
+    if submitted:
+        log("Submitted form via JS (fallback)")
+        return True
+
+    return False
+
+
+def resolve_ouo_link(ouo_url: str) -> str:
+    """Use Playwright to navigate ouo.io multi-step verification.
+
+    ouo.io has multiple steps: initial page → /go/ page → final redirect.
+    Each step may require clicking an "I'm human" button with overlay removal.
+    The final redirect may go to ouo.press (same service) which needs the same treatment.
+    """
+    log(f"Resolving ouo.io: {ouo_url}")
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        )
+        page = context.new_page()
+
+        try:
+            page.goto(ouo_url, wait_until="domcontentloaded", timeout=OUO_TIMEOUT)
+
+            # Multi-step loop: keep clicking through ouo.io/ouo.press pages
+            max_steps = 5
+            for step in range(max_steps):
+                current = page.url
+                log(f"Step {step + 1}: at {current}")
+
+                if not _is_ouo_domain(current):
+                    log(f"Resolved to: {current}")
+                    return current
+
+                # Simulate random mouse movements
+                for _ in range(random.randint(3, 5)):
+                    page.mouse.move(random.randint(100, 1100), random.randint(100, 600))
+                    time.sleep(random.uniform(0.1, 0.3))
+
+                # Wait for countdown timer to finish (ouo.io shows "Your link is almost ready")
+                log("Waiting for countdown timer...")
+                time.sleep(10)
+
+                # Remove overlays and click
+                clicked = _ouo_remove_overlays_and_click(page)
+                if not clicked:
+                    log("WARNING: No button found on this step")
+
+                # Wait for navigation (either to next ouo step or final destination)
+                try:
+                    page.wait_for_function(
+                        f"() => window.location.href !== '{current}'",
+                        timeout=OUO_TIMEOUT,
+                    )
+                except PlaywrightTimeout:
+                    log(f"No navigation after click at step {step + 1}")
+
+                # Small delay for any JS redirects to settle
+                time.sleep(1)
+
+            # If we exhausted steps, check where we ended up
+            final_url = page.url
+            if not _is_ouo_domain(final_url):
+                log(f"Resolved to: {final_url}")
+                return final_url
+
+            # Last resort: scan page for fireload links
+            links = page.eval_on_selector_all(
+                "a[href]",
+                "els => els.map(e => e.href)"
+            )
+            for link in links:
+                if not _is_ouo_domain(link) and ("fireload" in link.lower() or "/d/" in link):
+                    log(f"Found target link in page: {link}")
+                    return link
+
+            raise RuntimeError(f"Failed to resolve ouo.io after {max_steps} steps, still at: {final_url}")
+
+        finally:
+            browser.close()
+
+
+# --- Page parsing ---
+
+def parse_ouo_links(html: str) -> list[str]:
+    """Extract deduplicated ouo.io links from HTML."""
+    seen = set()
+    links = []
+    for match in OUO_LINK_RE.finditer(html):
+        url = match.group(1)
+        if url not in seen:
+            seen.add(url)
+            links.append(url)
+    return links
+
+
+def series_name_from_url(url: str) -> str:
+    """Extract a readable series name from a tomosmanga.com URL slug."""
+    path = urllib.parse.urlparse(url).path.strip("/")
+    slug = path.split("/")[-1] if "/" in path else path
+    slug = SLUG_CLEANUP_RE.sub("", slug)
+    return slug.replace("-", " ").title()
+
+
+# --- Download pipeline ---
+
+def download_from_fireload(fireload_url: str, dest_dir: Path) -> Path:
+    """Use Playwright to navigate Fireload, click the download button,
+    and capture the downloaded file. Returns the path to the downloaded file."""
+    log(f"Downloading from Fireload: {fireload_url}")
+
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=True)
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 720},
+            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            accept_downloads=True,
+        )
+        page = context.new_page()
+
+        try:
+            page.goto(fireload_url, wait_until="domcontentloaded", timeout=60000)
+
+            # Save debug screenshot and HTML
+            try:
+                page.screenshot(path=str(DATA_DIR / "fireload-debug.png"))
+                (DATA_DIR / "fireload-debug.html").write_text(page.content()[:50000])
+                log("Fireload debug screenshot saved")
+            except Exception as e:
+                log(f"Fireload debug dump failed: {e}")
+
+            # Wait for countdown timer / JS to render download button
+            log("Waiting 15s for Fireload countdown...")
+            page.wait_for_timeout(15000)
+
+            # Save another screenshot after countdown
+            try:
+                page.screenshot(path=str(DATA_DIR / "fireload-debug-after.png"))
+            except Exception:
+                pass
+
+            # Try to find and click download button, capturing the download
+            download_selectors = [
+                "a#download", "a.download",
+                "a:has-text('Download')", "a:has-text('Descargar')",
+                "a:has-text('download')",
+                "button:has-text('Download')", "button:has-text('Descargar')",
+                "a[href*='/d/']", "a[href*='/download']",
+                "a.btn:has-text('Free')", "a.btn:has-text('Gratis')",
+                "form button[type='submit']",
+            ]
+
+            for selector in download_selectors:
+                try:
+                    el = page.query_selector(selector)
+                    if el and el.is_visible():
+                        log(f"Found Fireload button: {selector}")
+                        # Try to trigger download by clicking
+                        with page.expect_download(timeout=60000) as download_info:
+                            el.click(force=True)
+                        download = download_info.value
+                        dest = dest_dir / download.suggested_filename
+                        download.save_as(str(dest))
+                        log(f"Downloaded via browser: {dest.name}")
+                        return dest
+                except PlaywrightTimeout:
+                    log(f"No download triggered by {selector}, trying next")
+                    continue
+                except Exception as e:
+                    log(f"Click on {selector} failed: {e}")
+                    continue
+
+            # Fallback: look for direct download links and try urllib
+            links = page.eval_on_selector_all(
+                "a[href]",
+                "els => els.map(e => ({href: e.href, text: e.textContent}))"
+            )
+            log(f"Found {len(links)} links on Fireload page")
+            for link_info in links:
+                href = link_info.get("href", "")
+                text = link_info.get("text", "")
+                log(f"  Link: {text[:40]} -> {href[:80]}")
+
+            # Try any link that looks like a file download
+            for link_info in links:
+                href = link_info.get("href", "")
+                if any(ext in href.lower() for ext in [".rar", ".zip", ".cbz", ".cbr", ".pdf"]):
+                    if "fireload" not in href or "/d/" in href or "download" in href:
+                        log(f"Trying direct download: {href}")
+                        return _urllib_download(href, dest_dir)
+
+            raise RuntimeError(f"Could not download from Fireload page: {fireload_url}")
+
+        finally:
+            browser.close()
+
+
+def _urllib_download(url: str, dest_dir: Path) -> Path:
+    """Download a file via urllib. Fallback when Playwright download doesn't work."""
+    log(f"Downloading file (urllib): {url}")
+    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+    try:
+        resp = urllib.request.urlopen(req, timeout=600)
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"Download HTTP {e.code} for {url}") from e
+    except urllib.error.URLError as e:
+        raise RuntimeError(f"Download connection error for {url}: {e.reason}") from e
+    with resp:
+        cd = resp.headers.get("Content-Disposition", "")
+        filename = None
+        if "filename=" in cd:
+            m = re.search(r'filename[*]?=["\']?([^"\';\n]+)', cd)
+            if m:
+                filename = m.group(1).strip().strip('"').strip("'")
+        if not filename:
+            filename = urllib.parse.unquote(url.split("/")[-1].split("?")[0])
+        if not filename:
+            filename = "download.bin"
+
+        dest = dest_dir / filename
+        total = int(resp.headers.get("Content-Length", 0))
+        downloaded = 0
+        with open(dest, "wb") as f:
+            while True:
+                chunk = resp.read(1024 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                downloaded += len(chunk)
+                if total > 0:
+                    pct = downloaded * 100 // total
+                    log(f"  {downloaded // (1024*1024)} / {total // (1024*1024)} MB ({pct}%)",
+                        transient=True)
+    log(f"Downloaded: {dest.name} ({downloaded // (1024*1024)} MB)")
+    return dest
+
+
+def extract_archive(archive_path: Path, dest_dir: Path) -> list[Path]:
+    """Extract an archive with 7z and return comic files found."""
+    log(f"Extracting: {archive_path.name}")
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    result = subprocess.run(
+        ["7z", "x", str(archive_path), f"-o{dest_dir}", "-y"],
+        capture_output=True, text=True, timeout=600,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"7z extraction failed: {result.stderr.strip()}")
+    comic_files = []
+    for root, _dirs, files in os.walk(dest_dir):
+        for f in files:
+            p = Path(root) / f
+            if p.suffix.lower() in COMIC_EXTENSIONS:
+                comic_files.append(p)
+    comic_files.sort(key=lambda p: p.name)
+    log(f"Extracted {len(comic_files)} comic file(s)")
+    return comic_files
+
+
+def move_comic_files(files: list[Path], series_dir: Path):
+    """Move comic files to the series directory under the upload dir."""
+    series_dir.mkdir(parents=True, exist_ok=True)
+    for f in files:
+        dest = series_dir / f.name
+        shutil.move(str(f), str(dest))
+        log(f"Moved: {f.name} -> {series_dir.name}/")
+
+
+def cleanup_staging():
+    """Remove all files from the staging directory."""
+    if STAGING_DIR.exists():
+        for child in STAGING_DIR.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child)
+            else:
+                child.unlink()
+
+
+# --- Logging ---
+
+_log_lines = []
+
+
+def log(message: str, transient: bool = False):
+    """Print a log message and track it for status updates."""
+    print(message, flush=True)
+    if not transient:
+        _log_lines.append(message)
+
+
+# --- PID management ---
+
+def check_already_running() -> bool:
+    if not PID_FILE.exists():
+        return False
+    try:
+        pid = int(PID_FILE.read_text().strip())
+        os.kill(pid, 0)
+        return True
+    except (ValueError, ProcessLookupError, PermissionError):
+        PID_FILE.unlink(missing_ok=True)
+        return False
+
+
+def write_pid():
+    PID_FILE.write_text(str(os.getpid()))
+
+
+def remove_pid():
+    PID_FILE.unlink(missing_ok=True)
+
+
+# --- Main ---
+
+def main():
+    parser = argparse.ArgumentParser(description="Download manga from tomosmanga.com")
+    parser.add_argument("--url", required=True, help="tomosmanga.com series URL")
+    parser.add_argument("--series", default="", help="Override series name")
+    args = parser.parse_args()
+
+    if check_already_running():
+        print("ERROR: Another download is already running.", file=sys.stderr)
+        sys.exit(1)
+
+    series = args.series.strip() or series_name_from_url(args.url)
+    started = datetime.now(timezone.utc).isoformat()
+
+    # Handle signals for clean shutdown
+    def handle_signal(signum, _frame):
+        update_status(state="failed", current="Interrupted by signal")
+        append_history({
+            "url": args.url, "series": series, "started": started,
+            "finished": datetime.now(timezone.utc).isoformat(),
+            "state": "failed", "total": 0, "completed": 0,
+            "errors": ["Interrupted by signal"],
+        })
+        remove_pid()
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, handle_signal)
+
+    write_pid()
+    errors = []
+    completed_count = 0
+    total_count = 0
+    volumes = []
+
+    try:
+        update_status(
+            state="running", url=args.url, series=series,
+            total=0, completed=0, current="Fetching page...",
+            volumes=[], errors=[], pid=os.getpid(),
+        )
+
+        # Step 1: Fetch the tomosmanga page
+        log(f"Fetching: {args.url}")
+        html, _ = byparr_request(args.url)
+
+        # Step 2: Parse ouo.io links
+        ouo_links = parse_ouo_links(html)
+        total_count = len(ouo_links)
+        if not ouo_links:
+            raise RuntimeError("No ouo.io download links found on the page.")
+        log(f"Found {total_count} download link(s)")
+
+        volumes = [{"name": f"Volume {i+1}", "state": "pending"} for i in range(total_count)]
+        update_status(total=total_count, volumes=volumes)
+
+        series_dir = UPLOAD_DIR / series
+
+        # Step 3: Sequential download loop
+        for i, ouo_url in enumerate(ouo_links):
+            vol_label = f"Volume {i+1}/{total_count}"
+            volumes[i]["state"] = "downloading"
+            update_status(
+                completed=completed_count, current=f"Resolving {vol_label}",
+                volumes=volumes,
+            )
+
+            try:
+                cleanup_staging()
+
+                # Resolve ouo.io -> Fireload URL
+                fireload_url = resolve_ouo_link(ouo_url)
+                volumes[i]["name"] = f"Volume {i+1}"
+                update_status(current=f"Downloading {vol_label}", volumes=volumes)
+
+                # Download from Fireload (handles countdown + download in browser)
+                archive_path = download_from_fireload(fireload_url, STAGING_DIR)
+                volumes[i]["name"] = archive_path.name
+
+                # Extract
+                update_status(current=f"Extracting {vol_label}", volumes=volumes)
+                extract_dir = STAGING_DIR / "extracted"
+                comic_files = extract_archive(archive_path, extract_dir)
+
+                if not comic_files:
+                    raise RuntimeError("No comic files found in archive")
+
+                # Move to upload dir
+                move_comic_files(comic_files, series_dir)
+                volumes[i]["state"] = "done"
+                completed_count += 1
+                update_status(completed=completed_count, volumes=volumes)
+
+            except Exception as e:
+                tb = traceback.format_exc()
+                err_msg = f"{vol_label}: {e}"
+                log(f"ERROR: {err_msg}")
+                log(f"Traceback:\n{tb}")
+                errors.append(err_msg)
+                volumes[i]["state"] = "failed"
+                update_status(errors=errors, volumes=volumes)
+
+            # Delay between downloads (except after the last one)
+            if i < total_count - 1:
+                log(f"Waiting {DELAY}s before next download...")
+                time.sleep(DELAY)
+
+        final_state = "completed" if completed_count == total_count else "failed"
+        log(f"Done: {completed_count}/{total_count} volumes downloaded for '{series}'")
+        update_status(state=final_state, current="Done")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        log(f"FATAL: {e}")
+        log(f"Traceback:\n{tb}")
+        errors.append(str(e))
+        update_status(state="failed", current=str(e), errors=errors)
+        final_state = "failed"
+
+    finally:
+        cleanup_staging()
+        remove_pid()
+        append_history({
+            "url": args.url,
+            "series": series,
+            "started": started,
+            "finished": datetime.now(timezone.utc).isoformat(),
+            "state": final_state if "final_state" in dir() else "failed",
+            "total": total_count,
+            "completed": completed_count,
+            "errors": errors,
+        })
+
+
+if __name__ == "__main__":
+    main()
+{% endraw %}

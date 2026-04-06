@@ -28,6 +28,17 @@
   loop_control:
     label: "{{ item.0.name }} → {{ item.1 }}"
 
+- name: Create personal home directories
+  ansible.builtin.file:
+    path: "{{ samba_homes_path }}/{{ item.name }}"
+    state: directory
+    owner: "{{ item.name }}"
+    group: "{{ samba_rw_group }}"
+    mode: "0700"
+  loop: "{{ samba_users }}"
+  loop_control:
+    label: "{{ item.name }}"
+
 - name: Set Samba passwords
   ansible.builtin.shell:
     cmd: "printf '%s\n%s\n' '{{ item.password }}' '{{ item.password }}' | smbpasswd -s -a {{ item.name }}"

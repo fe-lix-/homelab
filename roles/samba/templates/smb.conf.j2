@@ -7,6 +7,15 @@ guest account = {{ samba_guest_user }}
 log file = /var/log/samba/log.%m
 max log size = 1000
 
+[homes]
+comment = Personal home directory
+path = {{ samba_homes_path }}/%S
+browseable = no
+read only = no
+valid users = %S
+create mask = 0600
+directory mask = 0700
+
 [srv]
 path = {{ samba_share_path }}
 comment = Homelab shared storage
@@ -20,10 +29,11 @@ directory mask = 0775
 
 [uploads]
 path = {{ samba_upload_dir }}
-comment = Guest upload folder
+comment = Upload dropbox (files are immutable after upload)
 browseable = yes
 read only = no
 guest ok = yes
 force user = {{ samba_guest_user }}
-create mask = 0664
+create mask = 0444
+force create mode = 0444
 directory mask = 0775

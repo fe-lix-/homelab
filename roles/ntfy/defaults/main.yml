@@ -2,3 +2,4 @@
 ntfy_version: "v2.11.0"
 ntfy_port: 9092
 ntfy_data_dir: /opt/ntfy
+ntfy_admin_password: ""   # set in vault: ntfy_admin_password
