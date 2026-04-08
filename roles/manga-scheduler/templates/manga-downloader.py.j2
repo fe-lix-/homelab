@@ -25,6 +25,9 @@ BYPARR_TIMEOUT = 120000  # ms
 STAGING_DIR = Path("{{ manga_downloader_staging_dir }}")
 UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
 DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
+NTFY_URL = "{{ manga_scheduler_ntfy_url }}"
+NTFY_TOPIC = "{{ manga_scheduler_ntfy_topic }}"
+NTFY_TOKEN = "{{ manga_scheduler_ntfy_token }}"
 STATUS_FILE = DATA_DIR / "download-status.json"
 HISTORY_FILE = DATA_DIR / "download-history.json"
 PID_FILE = DATA_DIR / "downloader.pid"
@@ -464,6 +467,9 @@ def move_comic_files(files: list[Path], series_dir: Path):
     series_dir.mkdir(parents=True, exist_ok=True)
     for f in files:
         dest = series_dir / f.name
+        if dest.exists():
+            log(f"Skipped (already exists): {f.name}")
+            continue
         shutil.move(str(f), str(dest))
         log(f"Moved: {f.name} -> {series_dir.name}/")
 
@@ -476,6 +482,27 @@ def cleanup_staging():
                 shutil.rmtree(child)
             else:
                 child.unlink()
+
+
+# --- Notifications ---
+
+def notify(title: str, message: str, tags: str = "", priority: str = "default") -> None:
+    """Send a notification via ntfy."""
+    if not NTFY_TOKEN:
+        return
+    url = f"{NTFY_URL}/{NTFY_TOPIC}"
+    headers = {
+        "Authorization": f"Bearer {NTFY_TOKEN}",
+        "Title": title,
+        "Priority": priority,
+    }
+    if tags:
+        headers["Tags"] = tags
+    req = urllib.request.Request(url, data=message.encode(), headers=headers)
+    try:
+        urllib.request.urlopen(req, timeout=10).close()
+    except Exception as exc:
+        print(f"Warning: ntfy notification failed: {exc}", file=sys.stderr)
 
 
 # --- Logging ---
@@ -518,6 +545,7 @@ def main():
     parser = argparse.ArgumentParser(description="Download manga from tomosmanga.com")
     parser.add_argument("--url", required=True, help="tomosmanga.com series URL")
     parser.add_argument("--series", default="", help="Override series name")
+    parser.add_argument("--user", default="Unknown", help="Name of the user who triggered the download")
     args = parser.parse_args()
 
     if check_already_running():
@@ -547,6 +575,14 @@ def main():
     total_count = 0
     volumes = []
 
+    # Read previous status before overwriting (needed for retry skip logic)
+    prev_status = None
+    if STATUS_FILE.exists():
+        try:
+            prev_status = json.loads(STATUS_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+
     try:
         update_status(
             state="running", url=args.url, series=series,
@@ -566,12 +602,31 @@ def main():
         log(f"Found {total_count} download link(s)")
 
         volumes = [{"name": f"Volume {i+1}", "state": "pending"} for i in range(total_count)]
-        update_status(total=total_count, volumes=volumes)
+
+        # Check previous status to skip already-completed volumes on retry
+        previously_done = set()
+        if (prev_status
+                and prev_status.get("url") == args.url
+                and prev_status.get("series") == series):
+            for idx, vol in enumerate(prev_status.get("volumes", [])):
+                if vol.get("state") == "done" and idx < total_count:
+                    previously_done.add(idx)
+                    volumes[idx]["name"] = vol.get("name", f"Volume {idx+1}")
+                    volumes[idx]["state"] = "done"
+                    completed_count += 1
+            if previously_done:
+                log(f"Retry: skipping {len(previously_done)} already-completed volume(s)")
+
+        update_status(total=total_count, completed=completed_count, volumes=volumes)
 
         series_dir = UPLOAD_DIR / series
 
         # Step 3: Sequential download loop
         for i, ouo_url in enumerate(ouo_links):
+            if i in previously_done:
+                log(f"Skipping Volume {i+1}/{total_count} (already downloaded)")
+                continue
+
             vol_label = f"Volume {i+1}/{total_count}"
             volumes[i]["state"] = "downloading"
             update_status(
@@ -623,6 +678,24 @@ def main():
         log(f"Done: {completed_count}/{total_count} volumes downloaded for '{series}'")
         update_status(state=final_state, current="Done")
 
+        if final_state == "completed":
+            notify(
+                f"✅ {series}",
+                f"Downloaded {completed_count}/{total_count} volume(s)\n"
+                f"Triggered by: {args.user}",
+                tags="white_check_mark",
+            )
+        else:
+            failed_vols = [v["name"] for v in volumes if v["state"] == "failed"]
+            notify(
+                f"⚠️ {series}",
+                f"{completed_count}/{total_count} volume(s) downloaded\n"
+                f"Failed: {', '.join(failed_vols)}\n"
+                f"Triggered by: {args.user}",
+                tags="warning",
+                priority="high",
+            )
+
     except Exception as e:
         tb = traceback.format_exc()
         log(f"FATAL: {e}")
@@ -630,6 +703,13 @@ def main():
         errors.append(str(e))
         update_status(state="failed", current=str(e), errors=errors)
         final_state = "failed"
+        notify(
+            f"❌ {series}",
+            f"Download failed: {e}\n"
+            f"Triggered by: {args.user}",
+            tags="x",
+            priority="high",
+        )
 
     finally:
         cleanup_staging()

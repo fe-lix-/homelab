@@ -22,6 +22,7 @@ DOWNLOADER_SCRIPT = DATA_DIR / "manga-downloader.py"
 DOWNLOAD_STATUS_FILE = DATA_DIR / "download-status.json"
 DOWNLOAD_HISTORY_FILE = DATA_DIR / "download-history.json"
 DOWNLOAD_PID_FILE = DATA_DIR / "downloader.pid"
+TRIGGER_USER_FILE = DATA_DIR / "trigger-user.txt"
 PORT = {{ manga_scheduler_ui_port }}
 {% raw %}
 COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
@@ -524,6 +525,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         series = params.get("series", [""])[0].strip()
+        user = self.headers.get("Remote-Name") or self.headers.get("Remote-User") or "Unknown"
 
         if not series:
             self.send_redirect("/?msg=No+series+specified&err=1")
@@ -531,6 +533,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         # Write pending file so the service delivers this specific series
         PENDING_FILE.write_text(series)
+        TRIGGER_USER_FILE.write_text(user)
 
         # Start the service (synchronous for oneshot — waits for completion)
         result = subprocess.run(
@@ -561,7 +564,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_redirect("/?msg=" + urllib.parse.quote("A download is already in progress.") + "&err=1")
             return
 
-        cmd = [str(DATA_DIR / "venv" / "bin" / "python"), str(DOWNLOADER_SCRIPT), "--url", url]
+        user = self.headers.get("Remote-Name") or self.headers.get("Remote-User") or "Unknown"
+        cmd = [str(DATA_DIR / "venv" / "bin" / "python"), str(DOWNLOADER_SCRIPT), "--url", url, "--user", user]
         if series:
             cmd.extend(["--series", series])
 

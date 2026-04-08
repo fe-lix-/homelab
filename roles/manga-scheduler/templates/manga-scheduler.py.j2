@@ -18,9 +18,13 @@ DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
 TARGET_BYTES = {{ manga_scheduler_target_mb }} * 1024 * 1024
 STATE_FILE = DATA_DIR / "state.json"
 PENDING_FILE = DATA_DIR / "pending.txt"
+TRIGGER_USER_FILE = DATA_DIR / "trigger-user.txt"
 KOMGA_URL = "http://127.0.0.1:{{ komga_port }}"
 KOMGA_USER = "{{ komga_admin_email }}"
 KOMGA_PASSWORD = "{{ komga_admin_password }}"
+NTFY_URL = "{{ manga_scheduler_ntfy_url }}"
+NTFY_TOPIC = "{{ manga_scheduler_ntfy_topic }}"
+NTFY_TOKEN = "{{ manga_scheduler_ntfy_token }}"
 
 VOLUME_SUFFIX_RE = re.compile(
     r"\s*-\s*(Tomo|Vol\.?|Volume|Book)\s+\d+.*$", re.IGNORECASE
@@ -147,6 +151,25 @@ def move_files(
                     source_dir.rmdir()
 
 
+def notify(title: str, message: str, tags: str = "", priority: str = "default") -> None:
+    """Send a notification via ntfy."""
+    if not NTFY_TOKEN:
+        return
+    url = f"{NTFY_URL}/{NTFY_TOPIC}"
+    headers = {
+        "Authorization": f"Bearer {NTFY_TOKEN}",
+        "Title": title,
+        "Priority": priority,
+    }
+    if tags:
+        headers["Tags"] = tags
+    req = urllib.request.Request(url, data=message.encode(), headers=headers)
+    try:
+        urllib.request.urlopen(req, timeout=10).close()
+    except Exception as exc:
+        print(f"Warning: ntfy notification failed: {exc}", file=sys.stderr)
+
+
 def scan_komga(dry_run: bool) -> None:
     """Trigger a library scan on all Komga libraries."""
     if dry_run:
@@ -181,6 +204,15 @@ def consume_pending() -> str | None:
     return None
 
 
+def consume_trigger_user() -> str:
+    """Read and delete the trigger user file. Returns user name or 'Scheduled'."""
+    if TRIGGER_USER_FILE.exists():
+        user = TRIGGER_USER_FILE.read_text().strip()
+        TRIGGER_USER_FILE.unlink()
+        return user or "Scheduled"
+    return "Scheduled"
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manga Scheduler")
     parser.add_argument("--dry-run", action="store_true", help="Print actions without executing")
@@ -211,6 +243,7 @@ def main() -> None:
     current_index = state.get("current_index", 0) % max(len(series_order), 1)
 
     # Determine which series to deliver: CLI flag > pending file > round-robin
+    trigger_user = consume_trigger_user()
     forced_series = args.series or consume_pending()
     if forced_series:
         if forced_series not in discovered:
@@ -235,6 +268,15 @@ def main() -> None:
 
     move_files(batch, chosen_series, comics_dir, upload_dir, args.dry_run)
     scan_komga(args.dry_run)
+
+    if not args.dry_run:
+        notify(
+            f"📚 {chosen_series}",
+            f"{len(batch)} file(s) delivered (~{total_mb:.1f} MB)\n"
+            f"{len(files) - len(batch)} file(s) remaining\n"
+            f"Triggered by: {trigger_user}",
+            tags="books",
+        )
 
     # Advance index for next run
     next_index = (chosen_index + 1) % len(series_order)

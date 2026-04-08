@@ -7,3 +7,6 @@ manga_scheduler_schedule: "*-*-1/2 04:00:00"
 manga_scheduler_ui_port: 5010
 manga_downloader_delay: 30
 manga_downloader_staging_dir: "{{ manga_scheduler_data_dir }}/staging"
+manga_scheduler_ntfy_url: "http://127.0.0.1:{{ ntfy_port }}"
+manga_scheduler_ntfy_topic: "manga"
+manga_scheduler_ntfy_token: ""  # set in vault: vault_manga_scheduler_ntfy_token
