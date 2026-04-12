@@ -66,6 +66,8 @@
       tags: manga-scheduler
     - role: ntfy
       tags: ntfy
+    - role: screentime
+      tags: screentime
     - role: certbot
       tags: certbot
     - role: nginx

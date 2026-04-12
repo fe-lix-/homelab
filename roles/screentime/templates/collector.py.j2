@@ -1,0 +1,322 @@
+#!/usr/bin/env python3
+"""Screen time collector: polls Pi-hole DNS logs and exposes per-device,
+per-service active minutes as Prometheus metrics.
+
+Automatically discovers all devices on a configured subnet by scanning
+Pi-hole's client list. Optionally maps IPs to friendly names."""
+
+import json
+import logging
+import time
+from collections import defaultdict
+from datetime import datetime
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
+from threading import Thread
+
+import requests
+import yaml
+from prometheus_client import CollectorRegistry, Gauge, generate_latest
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+log = logging.getLogger("screentime")
+
+CONFIG_PATH = Path("/app/config.yml")
+DATA_DIR = Path("/app/data")
+
+# Prometheus metrics
+registry = CollectorRegistry()
+active_minutes_gauge = Gauge(
+    "screentime_active_minutes",
+    "Active minutes today per device and service",
+    ["device", "service"],
+    registry=registry,
+)
+queries_total_gauge = Gauge(
+    "screentime_queries_total",
+    "Total DNS queries today per device and service",
+    ["device", "service"],
+    registry=registry,
+)
+last_seen_gauge = Gauge(
+    "screentime_last_seen_timestamp",
+    "Last DNS query timestamp per device and service",
+    ["device", "service"],
+    registry=registry,
+)
+total_active_gauge = Gauge(
+    "screentime_total_active_minutes",
+    "Total active minutes today across all services per device",
+    ["device"],
+    registry=registry,
+)
+collector_errors_gauge = Gauge(
+    "screentime_collector_errors_total",
+    "Total collector polling errors",
+    registry=registry,
+)
+last_poll_gauge = Gauge(
+    "screentime_last_poll_timestamp",
+    "Timestamp of last successful poll",
+    registry=registry,
+)
+tracked_devices_gauge = Gauge(
+    "screentime_tracked_devices",
+    "Number of devices currently tracked on the subnet",
+    registry=registry,
+)
+
+
+def load_config():
+    with open(CONFIG_PATH) as f:
+        return yaml.safe_load(f)
+
+
+def build_domain_index(services):
+    """Build a mapping from domain suffix to service name for fast lookups."""
+    index = {}
+    for svc_name, svc_conf in services.items():
+        for domain in svc_conf["domains"]:
+            index[domain.lower()] = svc_name
+    return index
+
+
+def match_service(query_domain, domain_index):
+    """Check if a queried domain matches any tracked service (suffix match)."""
+    query_domain = query_domain.lower().rstrip(".")
+    for suffix, svc_name in domain_index.items():
+        if query_domain == suffix or query_domain.endswith("." + suffix):
+            return svc_name
+    return None
+
+
+def start_of_day():
+    """Return Unix timestamp for start of today (local time)."""
+    now = datetime.now()
+    midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return int(midnight.timestamp())
+
+
+def discover_clients(pihole_url, api_token, subnet):
+    """Discover all Pi-hole clients on the target subnet."""
+    params = {"getQuerySources": "100", "auth": api_token}
+    resp = requests.get(f"{pihole_url}/admin/api.php", params=params, timeout=30)
+    resp.raise_for_status()
+    data = resp.json()
+
+    sources = data.get("top_sources", {})
+    clients = []
+    for source_key in sources:
+        # source_key can be "hostname|ip" or just "ip"
+        ip = source_key.split("|")[-1] if "|" in source_key else source_key
+        if ip.startswith(subnet):
+            clients.append(ip)
+
+    return clients
+
+
+def fetch_all_queries(pihole_url, api_token, from_ts, until_ts):
+    """Fetch all DNS queries from Pi-hole API for the time window."""
+    params = {
+        "getAllQueries": "",
+        "from": from_ts,
+        "until": until_ts,
+        "auth": api_token,
+    }
+    resp = requests.get(f"{pihole_url}/admin/api.php", params=params, timeout=60)
+    resp.raise_for_status()
+    data = resp.json()
+
+    if isinstance(data, list):
+        return []
+    return data.get("data", [])
+
+
+def split_by_client(all_queries, client_ips):
+    """Split queries by exact client IP match. Returns {ip: [queries]}."""
+    client_set = set(client_ips)
+    result = {ip: [] for ip in client_ips}
+    for entry in all_queries:
+        client = entry[3]
+        if client in client_set:
+            result[client].append(entry)
+    return result
+
+
+def compute_metrics(queries, domain_index):
+    """Compute active minutes and query counts per service from raw queries.
+
+    Returns:
+        dict: {service_name: {"minutes": set of minute buckets,
+                               "count": int,
+                               "last_seen": int timestamp}}
+    """
+    results = defaultdict(lambda: {"minutes": set(), "count": 0, "last_seen": 0})
+
+    for entry in queries:
+        timestamp = int(entry[0])
+        domain = entry[2]
+
+        svc = match_service(domain, domain_index)
+        if svc is None:
+            continue
+
+        minute_bucket = timestamp // 60
+        results[svc]["minutes"].add(minute_bucket)
+        results[svc]["count"] += 1
+        if timestamp > results[svc]["last_seen"]:
+            results[svc]["last_seen"] = timestamp
+
+    return results
+
+
+def device_label(ip, device_names):
+    """Return the friendly name for an IP, or the IP itself."""
+    return device_names.get(ip, ip)
+
+
+def poll_once(config, domain_index):
+    """Run one polling cycle: discover devices, fetch queries, update metrics."""
+    pihole_url = config["pihole"]["url"]
+    api_token = config["pihole"]["api_token"]
+    subnet = config["subnet"]
+    services = config["services"]
+    device_names = config.get("device_names") or {}
+    now_ts = int(time.time())
+    day_start = start_of_day()
+
+    # Discover all clients on the target subnet
+    try:
+        client_ips = discover_clients(pihole_url, api_token, subnet)
+    except Exception as e:
+        log.error("Failed to discover clients: %s", e)
+        collector_errors_gauge.inc()
+        return
+
+    tracked_devices_gauge.set(len(client_ips))
+
+    if not client_ips:
+        log.warning("No clients found on subnet %s — is DHCP DNS set to Pi-hole?", subnet)
+        return
+
+    # Fetch all queries once, then split by exact client IP
+    try:
+        all_queries = fetch_all_queries(pihole_url, api_token, day_start, now_ts)
+    except Exception as e:
+        log.error("Failed to fetch queries: %s", e)
+        collector_errors_gauge.inc()
+        return
+
+    queries_by_client = split_by_client(all_queries, client_ips)
+
+    for ip in client_ips:
+        name = device_label(ip, device_names)
+        queries = queries_by_client[ip]
+        results = compute_metrics(queries, domain_index)
+
+        # Track all active minutes across services for this device
+        all_minutes = set()
+
+        for svc_name in services:
+            svc_data = results.get(svc_name)
+            if svc_data:
+                minutes = len(svc_data["minutes"])
+                count = svc_data["count"]
+                last_seen = svc_data["last_seen"]
+                all_minutes.update(svc_data["minutes"])
+            else:
+                minutes = 0
+                count = 0
+                last_seen = 0
+
+            active_minutes_gauge.labels(device=name, service=svc_name).set(minutes)
+            queries_total_gauge.labels(device=name, service=svc_name).set(count)
+            if last_seen > 0:
+                last_seen_gauge.labels(device=name, service=svc_name).set(last_seen)
+
+        total_active_gauge.labels(device=name).set(len(all_minutes))
+
+        if results:
+            log.info(
+                "Device %s (%s): %d queries, %d active minutes across %d services",
+                name, ip,
+                sum(r["count"] for r in results.values()),
+                len(all_minutes),
+                len(results),
+            )
+
+    last_poll_gauge.set(now_ts)
+    log.info(
+        "Poll complete: %d devices on %s0/24, %d total queries fetched",
+        len(client_ips), subnet, len(all_queries),
+    )
+
+
+class MetricsHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path == "/metrics":
+            output = generate_latest(registry)
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4")
+            self.end_headers()
+            self.write(output)
+        elif self.path == "/health":
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.write(b'{"status":"ok"}')
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def write(self, data):
+        if isinstance(data, str):
+            data = data.encode()
+        self.wfile.write(data)
+
+    def log_message(self, format, *args):
+        pass
+
+
+def polling_loop(config, domain_index):
+    interval = config.get("poll_interval", 60)
+    while True:
+        try:
+            poll_once(config, domain_index)
+        except Exception as e:
+            log.error("Polling cycle failed: %s", e)
+            collector_errors_gauge.inc()
+        time.sleep(interval)
+
+
+def main():
+    config = load_config()
+    domain_index = build_domain_index(config["services"])
+    device_names = config.get("device_names") or {}
+
+    log.info(
+        "Starting screen time collector: subnet %s0/24, %d services, poll every %ds",
+        config["subnet"],
+        len(config["services"]),
+        config.get("poll_interval", 60),
+    )
+    if device_names:
+        for ip, name in device_names.items():
+            log.info("  Name mapping: %s -> %s", ip, name)
+    for svc, conf in config["services"].items():
+        log.info("  Service: %s (%s)", svc, ", ".join(conf["domains"]))
+
+    poller = Thread(target=polling_loop, args=(config, domain_index), daemon=True)
+    poller.start()
+
+    server = HTTPServer(("0.0.0.0", 9200), MetricsHandler)
+    log.info("Metrics server listening on :9200")
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

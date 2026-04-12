@@ -73,6 +73,7 @@
   loop:
     - server-overview.json.j2
     - temperatures.json.j2
+    - screen-time.json.j2
   notify: Restart monitoring
 
 - name: Deploy static Grafana dashboards

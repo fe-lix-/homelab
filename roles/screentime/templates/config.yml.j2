@@ -1,0 +1,21 @@
+pihole:
+  url: "{{ screentime_pihole_url }}"
+  api_token: "{{ screentime_pihole_api_token }}"
+
+poll_interval: {{ screentime_poll_interval }}
+
+subnet: "{{ screentime_subnet }}"
+
+device_names:
+{% for ip, name in screentime_device_names.items() %}
+  "{{ ip }}": "{{ name }}"
+{% endfor %}
+
+services:
+{% for name, svc in screentime_services.items() %}
+  {{ name }}:
+    domains:
+{% for domain in svc.domains %}
+      - "{{ domain }}"
+{% endfor %}
+{% endfor %}

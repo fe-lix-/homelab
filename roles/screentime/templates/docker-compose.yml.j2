@@ -1,0 +1,27 @@
+---
+services:
+  screentime-collector:
+    image: python:{{ screentime_version }}
+    container_name: screentime-collector
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ screentime_port }}:9200"
+    volumes:
+      - ./collector.py:/app/collector.py:ro
+      - ./config.yml:/app/config.yml:ro
+      - {{ screentime_data_dir }}/data:/app/data
+    command: >
+      sh -c "pip install --no-cache-dir prometheus_client requests pyyaml &&
+             python3 /app/collector.py"
+    networks:
+      - default
+      - pihole_default
+      - monitoring_default
+    environment:
+      TZ: "{{ timezone }}"
+
+networks:
+  pihole_default:
+    external: true
+  monitoring_default:
+    external: true

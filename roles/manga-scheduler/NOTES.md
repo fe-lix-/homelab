@@ -32,42 +32,44 @@ Key dependency: `playwright` (installed in venv, Chromium installed via `playwri
 ### Page structure
 
 - **Catalogue page** (`/catalogue/<slug>/`): Cloudflare-protected. Chapter/volume list in `<div class="eplister" id="chapterlist">` with `<li data-num="Volume 14">` entries. The last entry has an additional `class="first-chapter"` — regex must use `[^>]*` to match extra attributes.
-- **Reader page** (`/<slug>-volume-N/`): Cloudflare-protected. Image data embedded in `ts_reader.run({...})` JavaScript call. The JSON contains `sources[0].images[]` — a flat array of CDN image URLs.
-- **CDN** (`c.sushiscan.net` or `c1.sushiscan.net`): Separate Cloudflare protection from the main site. Cookies from `sushiscan.net` do NOT work on the CDN domain.
+- **Reader page** (`/<slug>-volume-N/`): Cloudflare-protected. Image data embedded in `ts_reader.run({...})` JavaScript call. The JSON contains `sources[0].images[]` — a flat array of CDN image URLs. The reader shows one page at a time (mode: "single") and prefetches the next page.
+- **CDN** (`c.sushiscan.net` or `c1.sushiscan.net`): Separate Cloudflare protection from the main site. Different manga may use different CDN subdomains.
 
 ### Image download — what works and what doesn't
 
-**Does NOT work**:
-- `urllib` with Referer header: CDN returns 403 (Cloudflare blocks).
-- `urllib` with `cf_clearance` cookies from ByParr: cookies are for `sushiscan.net`, not `c.sushiscan.net`. Still 403.
-- `page.request.get()` in Playwright: this is a programmatic fetch, not a browser navigation. CDN Cloudflare blocks it with 403 even within a browser context.
-- `page.goto()` with `wait_until="networkidle"`: reader pages have ads/trackers that keep connections open indefinitely. Always times out.
+**Working approach**: ByParr fetches the reader page HTML → parse `ts_reader.run()` for image URLs → ByParr's `cf_clearance` cookie (domain `.sushiscan.net`) is passed to urllib → urllib downloads images with browser-like headers. This works because the `.sushiscan.net` cookie covers CDN subdomains, and ByParr's cookie + urllib's TLS fingerprint are sometimes accepted by the CDN.
 
-**Working approach**: Playwright response interception. Navigate to the reader page with `wait_until="domcontentloaded"`, register a `page.on("response", handler)` listener, then scroll through the page to trigger lazy-loaded images. The browser loads images naturally (solving CDN Cloudflare), and the response handler captures the binary data.
+**Intermittent failures**: The CDN's Cloudflare protection may block urllib after a few requests. The `cf_clearance` cookie is tied to the TLS fingerprint of the browser that solved the challenge. urllib's TLS fingerprint differs from Chrome's and may be rejected. When this happens, the downloader fails fast (stops on first blocked image) and the error message suggests retrying later.
 
-Flow:
-1. Register response interceptor mapping CDN URLs to page numbers
-2. `page.goto(reader_url, wait_until="domcontentloaded")`
-3. Scroll progressively (10% increments, 1.5s pauses) to trigger lazy-loading
-4. Interceptor saves each image response to staging directory
-5. After scrolling, check which pages were captured vs missing
+**What does NOT work reliably**:
+- `page.request.get()` in Playwright: programmatic fetch, not a browser navigation. CDN blocks with 403.
+- `fetch()` / `XMLHttpRequest` from within a reader page: blocked by CORS (CDN is a different origin).
+- Canvas extraction (`drawImage` + `toDataURL`): CORS taint — CDN images loaded without `crossOrigin` taint the canvas.
+- Navigating Playwright directly to CDN image URLs: CDN detects headless browser and blocks.
+- Playwright response interception: the CDN serves a 403 Cloudflare challenge page, then the browser solves it via JS redirect. The interceptor only catches the initial 403, not the final image.
+- `page.goto()` with `wait_until="networkidle"` on reader pages: ads/trackers keep connections open. Always times out. Use `domcontentloaded` instead.
+- Playwright with persistent context / stealth mode: Cloudflare Turnstile detects Playwright's automation flags and enters an infinite verification loop even in non-headless mode.
+
+**Key insight — image validation**: Some manga pages are legitimately small (e.g., a white inner cover page can be ~5KB JPEG). Never use file size to validate images — check **magic bytes** instead (JPEG: `\xff\xd8\xff`, PNG: `\x89PNG`, WEBP: `RIFF`, AVIF: `\x00\x00\x00\x1c`). A 5KB Cloudflare HTML response and a 5KB white page JPEG are distinguished by their magic bytes, not their size.
+
+### Retry and recovery
+
+- If the CDN blocks, wait and retry later — the block is temporary (hours to days).
+- Pages are cached in staging (`/opt/manga-scheduler/staging/sushiscan/<entry>/`). On retry, only missing pages are re-downloaded.
+- The `cleanup_staging()` function preserves the `sushiscan/` subdirectory.
+- The download pipeline also checks for existing CBZ files on disk (in both `/srv/uploads/mangas/` and `/srv/comics/`) to avoid re-downloading completed entries.
 
 ### CBZ creation
 
 Sushiscan serves individual page images, not archives. The downloader creates CBZ files with:
-- Sequential page filenames: `001.webp`, `002.webp`, etc.
+- Sequential page filenames: `001.jpg`, `002.jpg`, etc.
 - `ComicInfo.xml` with `<Series>`, `<Volume>` (for volumes) or `<Number>` (for chapters), `<Title>`, `<PageCount>`, `<LanguageISO>fr`, `<Manga>YesAndRightToLeft`
 
-### Staging and retry
+### Delays
 
-Pages are downloaded to a staging directory (`/opt/manga-scheduler/staging/sushiscan/<entry_name>/`). If some pages fail, successfully downloaded pages are kept. On retry, cached pages (>10KB) are skipped. CBZ is only created when all pages are present. The staging dir is cleaned up after successful CBZ creation. The tomosmanga `cleanup_staging()` preserves the `sushiscan/` subdirectory.
-
-### Anti-hotlinking
-
-Image downloads require:
-- Browser-like `User-Agent`
-- `Referer: https://sushiscan.net/` header
-- Valid Cloudflare cookies for the CDN domain (only obtainable via actual browser navigation)
+- 0.3–1.0s between page downloads (random)
+- 45–90s between volumes (random)
+- These mimic the reader's prefetch pattern where 1-2 pages load at a time
 
 ## fmteam.fr (chapter checker)
 
@@ -87,7 +89,7 @@ Downloaded chapters tracked in `/opt/manga-scheduler/chapter-checker-state.json`
 
 ### ntfy
 
-Uses the JSON publishing API (`POST` to base URL with `topic` in body) to handle UTF-8 in titles. Per-manga topics (e.g., `manga-bluelock`). Note: ntfy topic names cannot contain `/` — use `-` instead.
+Notifications sent to per-manga topics (e.g., `manga-bluelock`). Uses header-based publishing with `urllib.parse.quote()` for the Title header to handle non-ASCII characters. ntfy topic names cannot contain `/` — use `-` instead.
 
 ## Architecture
 
@@ -100,3 +102,4 @@ Uses the JSON publishing API (`POST` to base URL with `topic` in body) to handle
 - sushiscan: page images downloaded to `staging/sushiscan/<entry>/`, packaged into CBZ with ComicInfo.xml, moved to `/srv/uploads/mangas/<series>/`.
 - `manga-chapter-checker.py` is a separate daily systemd timer for fmteam.fr. Downloads chapters directly to `/srv/comics/<series>/` (bypasses the scheduler queue).
 - `schedule.json` stores active series selection. The scheduler filters round-robin to active series first, falls back to all when active are exhausted.
+- The UI has three pages: Delivery (`/`), Download (`/download-page`), and Schedule (`/schedule`).
