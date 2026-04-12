@@ -1,0 +1,57 @@
+---
+screentime_version: "3.12-alpine"
+screentime_port: 9200
+screentime_data_dir: /opt/screentime
+screentime_poll_interval: 60
+
+screentime_pihole_url: "http://pihole:80"
+screentime_pihole_api_token: "CHANGE_ME"
+
+# Track all devices on this subnet
+screentime_subnet: "10.0.4."
+
+# Optional: friendly name mapping (IP -> display name)
+# Populate from UniFi client list. Unknown IPs show as their IP address.
+screentime_device_names: {}
+#  "10.0.4.12": "kid_ipad"
+#  "10.0.4.15": "kid_iphone"
+
+screentime_services:
+  komga:
+    domains:
+      - "komga.lab.delval.eu"
+  netflix:
+    domains:
+      - "netflix.com"
+      - "nflxvideo.net"
+      - "nflxso.net"
+      - "nflximg.net"
+  youtube:
+    domains:
+      - "youtube.com"
+      - "googlevideo.com"
+      - "ytimg.com"
+      - "youtu.be"
+      - "yt3.ggpht.com"
+  roblox:
+    domains:
+      - "roblox.com"
+      - "rbxcdn.com"
+  pkxd:
+    domains:
+      - "pkxd.com"
+      - "playpkxd.com"
+  minecraft:
+    domains:
+      - "mojang.com"
+      - "minecraft.net"
+      - "minecraftservices.com"
+  chatgpt:
+    domains:
+      - "openai.com"
+      - "chatgpt.com"
+      - "oaiusercontent.com"
+  claude:
+    domains:
+      - "claude.ai"
+      - "anthropic.com"

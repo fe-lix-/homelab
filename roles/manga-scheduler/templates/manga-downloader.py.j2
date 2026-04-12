@@ -2,6 +2,7 @@
 """Manga Downloader — fetch manga volumes from tomosmanga.com via Fireload."""
 
 import argparse
+import base64
 import io
 import json
 import os
@@ -553,6 +554,14 @@ def remove_pid():
 
 # --- Sushiscan pipeline ---
 
+def is_valid_image(data: bytes) -> bool:
+    """Check if data starts with a known image magic bytes header."""
+    return (data[:3] == b"\xff\xd8\xff" or      # JPEG
+            data[:4] == b"\x89PNG" or             # PNG
+            data[:4] == b"RIFF" or                # WEBP
+            data[:4] == b"\x00\x00\x00\x1c")     # AVIF
+
+
 SUSHISCAN_CHAPTER_RE = re.compile(
     r'<li data-num="([^"]+)"[^>]*><div class="chbox"><div class="eph-num">\s*'
     r'<a href="([^"]+)">\s*'
@@ -661,10 +670,16 @@ def sushiscan_make_comicinfo(series_name: str, entry: dict, page_count: int) -> 
     return "\n".join(lines)
 
 
+class CDNBlockedError(RuntimeError):
+    """Raised when the CDN is actively blocking requests."""
+    pass
+
+
 def sushiscan_download_entry(entry: dict, series_name: str, dest_dir: Path) -> Path:
-    """Download all pages for a sushiscan entry via Playwright and create a CBZ.
+    """Download all pages for a sushiscan entry via ByParr and create a CBZ.
     Uses a staging directory to persist pages across retries.
-    Returns path to the created .cbz file."""
+    Returns path to the created .cbz file.
+    Raises CDNBlockedError if the CDN is blocking — caller should use the local script."""
     name = entry["name"]
     entry_url = entry["url"]
 
@@ -696,7 +711,10 @@ def sushiscan_download_entry(entry: dict, series_name: str, dest_dir: Path) -> P
         ext = os.path.splitext(urllib.parse.urlparse(img_url).path)[1] or ".webp"
         page_name = f"{i:03d}{ext}"
         page_path = staging_dir / page_name
-        if page_path.exists() and page_path.stat().st_size >= 10240:
+        # Check for cached file (original ext or .png from canvas capture)
+        png_path = staging_dir / f"{i:03d}.png"
+        if (page_path.exists() and page_path.stat().st_size > 0 and is_valid_image(page_path.read_bytes()[:4])) or \
+           (png_path.exists() and png_path.stat().st_size > 0 and is_valid_image(png_path.read_bytes()[:4])):
             continue
         needed.append((i, img_url, page_name, page_path))
 
@@ -705,16 +723,42 @@ def sushiscan_download_entry(entry: dict, series_name: str, dest_dir: Path) -> P
     else:
         log(f"  All {total_pages} pages cached")
 
-    # Download missing pages via Playwright (handles CDN Cloudflare)
+    # Download missing pages via ByParr cookies + urllib
     if needed:
-        failed_pages = _sushiscan_download_pages_playwright(
-            entry_url, needed, staging_dir, total_pages
-        )
+        log(f"  Fetching ByParr session for image downloads...")
+        sol = byparr_request(entry_url)
+        cookies = sol.get("cookies", [])
+        ua = sol.get("userAgent", SUSHISCAN_USER_AGENT)
+        cookie_header = sushiscan_build_cookie_header(cookies)
+        log(f"  Got {len(cookies)} cookie(s), downloading {len(needed)} page(s)...")
+
+        failed_pages = []
+        for i, img_url, page_name, page_path in needed:
+            log(f"  Page {i}/{total_pages}", transient=True)
+            try:
+                img_data = sushiscan_download_image(img_url, cookie_header, ua)
+                if is_valid_image(img_data[:4]):
+                    page_path.write_bytes(img_data)
+                else:
+                    log(f"  Page {i}: not an image ({len(img_data)} bytes)")
+                    failed_pages.append(i)
+            except Exception as exc:
+                log(f"  Page {i} failed: {exc}")
+                failed_pages.append(i)
+                # If first page fails, CDN is likely blocking — stop immediately
+                if len(failed_pages) == 1 and i == needed[0][0]:
+                    log(f"  CDN blocking detected on first image — stopping.")
+                    log(f"  Use the local script: scripts/sushiscan-download.py")
+                    raise CDNBlockedError(
+                        f"CDN blocked first image download. "
+                        f"Use the local script (scripts/sushiscan-download.py) with your browser cookie."
+                    )
+            time.sleep(random.uniform(0.3, 1.0))
+
         if failed_pages:
-            raise RuntimeError(
-                f"{len(failed_pages)}/{total_pages} page(s) failed: {failed_pages}. "
-                f"Retry to re-attempt only the missing pages."
-            )
+            msg = f"{len(failed_pages)}/{total_pages} page(s) failed. "
+            msg += "Use the local script (scripts/sushiscan-download.py) if CDN keeps blocking."
+            raise RuntimeError(msg)
 
     # All pages present — build CBZ
     cbz_name = f"{name}.cbz"
@@ -755,10 +799,10 @@ def _sushiscan_get_cf_cookies() -> tuple[list[dict], str]:
     return cookies, user_agent
 
 
-def _sushiscan_download_pages_playwright(entry_url: str, needed: list, staging_dir: Path, total_pages: int) -> list[int]:
+def _sushiscan_download_pages_playwright(entry_url: str, needed: list, staging_dir: Path, total_pages: int) -> tuple[list[int], bool]:
     """Download page images via Playwright by intercepting browser network responses.
     Uses ByParr to solve Cloudflare first, then injects cookies into Playwright.
-    Returns list of failed page numbers."""
+    Returns (failed_page_numbers, cdn_blocked)."""
 
     # Get Cloudflare cookies from ByParr (which can solve the challenge)
     cf_cookies, user_agent = _sushiscan_get_cf_cookies()
@@ -769,20 +813,30 @@ def _sushiscan_download_pages_playwright(entry_url: str, needed: list, staging_d
         needed_urls[img_url] = (i, page_name, page_path)
 
     captured = set()
+    cdn_blocked = False
 
     def handle_response(response):
         """Intercept image responses from the CDN."""
         url = response.url
-        if url not in needed_urls:
+        # Match by exact URL or by stripping query params
+        base_url = url.split("?")[0]
+        match = needed_urls.get(url) or needed_urls.get(base_url)
+        if not match:
+            # Log any CDN responses for debugging (first 5 only)
+            if "sushiscan" in url and not hasattr(handle_response, '_cdn_logged'):
+                handle_response._cdn_logged = 0
+            if "sushiscan" in url and getattr(handle_response, '_cdn_logged', 0) < 5:
+                log(f"  [intercept] {response.status} {url[:80]}")
+                handle_response._cdn_logged = getattr(handle_response, '_cdn_logged', 0) + 1
             return
-        i, page_name, page_path = needed_urls[url]
+        i, page_name, page_path = match
         try:
             if response.status == 200:
                 body = response.body()
-                if len(body) >= 10240:
+                if is_valid_image(body[:4]):
                     page_path.write_bytes(body)
                     captured.add(i)
-                    log(f"  Page {i}/{total_pages} captured ({len(body) // 1024}KB)", transient=True)
+                    log(f"  Page {i}/{total_pages} captured ({len(body) // 1024}KB)")
                 else:
                     log(f"  Page {i} too small ({len(body)} bytes)")
             else:
@@ -829,8 +883,9 @@ def _sushiscan_download_pages_playwright(entry_url: str, needed: list, staging_d
             window.chrome = { runtime: {} };
         """)
 
+        page.on("response", handle_response)
+
         try:
-            # First navigate to the reader page to establish the session
             log(f"  Opening reader page in browser: {entry_url}")
             page.goto(entry_url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(3000)
@@ -838,91 +893,175 @@ def _sushiscan_download_pages_playwright(entry_url: str, needed: list, staging_d
             # Check if Cloudflare challenge is showing
             page_title = page.title().lower()
             if "just a moment" in page_title or "attention required" in page_title or "security" in page_title:
-                log(f"  Cloudflare challenge still present, waiting...")
-                for _ in range(10):
+                log(f"  Cloudflare challenge detected, waiting for resolution...")
+                for _ in range(15):
                     page.wait_for_timeout(2000)
                     page_title = page.title().lower()
                     if "just a moment" not in page_title and "attention required" not in page_title and "security" not in page_title:
+                        log(f"  Cloudflare resolved")
                         break
                 else:
                     try:
                         page.screenshot(path=str(DATA_DIR / "cf-challenge-debug.png"))
-                        log(f"  DEBUG: screenshot saved")
                     except Exception:
                         pass
-                    raise RuntimeError("Cloudflare challenge not solved — ByParr cookies may have expired")
+                    raise RuntimeError("Cloudflare challenge not solved")
 
             log(f"  Page loaded: {page.title()}")
-            log(f"  Downloading {len(needed)} image(s) one by one...")
+            page.wait_for_timeout(3000)
 
-            # Download each image by navigating to it directly in the browser.
-            # The browser has valid CF cookies from the reader page session.
-            for i, img_url, page_name, page_path in needed:
+            # Warm up CDN Cloudflare: navigate a separate page to the first image URL.
+            # This forces the browser to solve the CDN challenge (Turnstile).
+            first_img_url = needed[0][1]
+            cdn_host = urllib.parse.urlparse(first_img_url).hostname
+            log(f"  Warming up CDN ({cdn_host}) by navigating to first image...")
+            cdn_page = context.new_page()
+            try:
+                # Register the response interceptor on cdn_page to capture images
+                cdn_page.on("response", handle_response)
+
+                # Navigate to first image and capture it via canvas
+                cdn_page.goto(first_img_url, timeout=30000)
+                cdn_page.wait_for_timeout(5000)
+
+                cdn_title = cdn_page.title()
+                log(f"  CDN warmup: title='{cdn_title}'")
+
+                # If the browser rendered the image, capture it via canvas
+                first_i, first_url, first_name, first_path = needed[0]
+                if "×" in cdn_title:
+                    try:
+                        img_b64 = cdn_page.evaluate("""() => {
+                            const img = document.querySelector('img');
+                            if (!img) return null;
+                            const c = document.createElement('canvas');
+                            c.width = img.naturalWidth;
+                            c.height = img.naturalHeight;
+                            c.getContext('2d').drawImage(img, 0, 0);
+                            return c.toDataURL('image/png').split(',')[1];
+                        }""")
+                        if img_b64:
+                            raw = base64.b64decode(img_b64)
+                            if is_valid_image(raw[:4]):
+                                first_path.with_suffix(".png").write_bytes(raw)
+                                captured.add(first_i)
+                                log(f"  Warmup: page {first_i} captured via canvas ({len(raw) // 1024}KB)")
+                            else:
+                                log(f"  Warmup: canvas data too small ({len(raw)} bytes)")
+                        else:
+                            log(f"  Warmup: no <img> found in DOM")
+                    except Exception as e:
+                        log(f"  Warmup canvas error: {e}")
+                else:
+                    log(f"  Warmup: not an image page (title: {cdn_title[:60]})")
+                    cdn_blocked = True
+
+                # Check if CDN Cloudflare challenge appeared
+                if "just a moment" in cdn_title or "attention" in cdn_title or "security" in cdn_title or "verify" in cdn_title:
+                    log(f"  CDN Cloudflare challenge detected, waiting up to 60s...")
+                    for attempt in range(30):
+                        cdn_page.wait_for_timeout(2000)
+                        cdn_title = cdn_page.title().lower()
+                        if "just a moment" not in cdn_title and "attention" not in cdn_title and "security" not in cdn_title and "verify" not in cdn_title:
+                            log(f"  CDN Cloudflare resolved after {(attempt+1)*2}s!")
+                            cdn_page.wait_for_timeout(2000)
+                            break
+                    else:
+                        try:
+                            cdn_page.screenshot(path=str(DATA_DIR / "cdn-challenge-debug.png"))
+                            log(f"  DEBUG: CDN challenge screenshot saved")
+                        except Exception:
+                            pass
+                        log(f"  WARNING: CDN Cloudflare challenge not auto-resolved")
+            except Exception as exc:
+                log(f"  CDN warmup error: {exc}")
+                cdn_page.close()
+                cdn_page = context.new_page()  # fallback: fresh page
+
+            page.wait_for_timeout(2000)
+
+            # Extract ALL cookies from the browser (including CDN cookies)
+            all_cookies = context.cookies()
+            cdn_cookie_header = "; ".join(
+                f"{c['name']}={c['value']}" for c in all_cookies
+                if "sushiscan" in c.get("domain", "")
+            )
+            cdn_ua = user_agent
+            log(f"  Extracted {len(all_cookies)} browser cookies:")
+            for c in all_cookies:
+                log(f"    {c['name']}: domain={c.get('domain')}")
+
+            log(f"  Downloading {len(needed)} page(s) via browser navigation...")
+
+            # Reuse the cdn_page that already successfully loaded an image.
+            # The CDN trusts this specific page/session — new pages get blocked.
+            # cdn_page was NOT closed; it stays alive with its CDN session.
+            for idx, (i, img_url, page_name, page_path) in enumerate(needed):
+                if i in captured:
+                    continue  # already captured by warmup or interceptor
                 log(f"  Page {i}/{total_pages} — downloading", transient=True)
                 try:
-                    resp = page.request.get(img_url, timeout=30000)
-                    if resp.status == 200:
-                        body = resp.body()
-                        if len(body) >= 10240:
-                            page_path.write_bytes(body)
-                            captured.add(i)
-                        else:
-                            log(f"  Page {i} too small ({len(body)} bytes)")
-                    elif resp.status == 403:
-                        # CDN challenged us — try navigating to the image directly
-                        # to solve the CDN's Cloudflare, then retry
-                        if i == needed[0][0]:  # only on first failure
-                            log(f"  Page {i} got 403, navigating to CDN to solve challenge...")
-                            page.goto(img_url, wait_until="domcontentloaded", timeout=30000)
-                            page.wait_for_timeout(5000)
-                            # Check if it's a Cloudflare challenge
-                            cf_title = page.title().lower()
-                            if "just a moment" in cf_title or "attention" in cf_title:
-                                log(f"  CDN Cloudflare challenge — waiting for auto-resolve...")
-                                for _ in range(15):
-                                    page.wait_for_timeout(2000)
-                                    cf_title = page.title().lower()
-                                    if "just a moment" not in cf_title and "attention" not in cf_title:
-                                        log(f"  CDN Cloudflare resolved")
-                                        break
-                            # Go back to reader page to restore context
-                            page.goto(entry_url, wait_until="domcontentloaded", timeout=60000)
-                            page.wait_for_timeout(2000)
-                            # Retry this image
-                            resp2 = page.request.get(img_url, timeout=30000)
-                            if resp2.status == 200:
-                                body = resp2.body()
-                                if len(body) >= 10240:
-                                    page_path.write_bytes(body)
-                                    captured.add(i)
-                                    log(f"  Page {i} succeeded after CDN challenge solve")
-                                else:
-                                    log(f"  Page {i} still too small after CDN solve ({len(body)} bytes)")
+                    cdn_page.goto(img_url, timeout=30000)
+                    cdn_page.wait_for_timeout(5000)
+
+                    title = cdn_page.title()
+                    if "×" in title:
+                        # Browser rendered the image — extract bytes via canvas
+                        img_b64 = cdn_page.evaluate("""() => {
+                            const img = document.querySelector('img');
+                            if (!img) return null;
+                            const c = document.createElement('canvas');
+                            c.width = img.naturalWidth;
+                            c.height = img.naturalHeight;
+                            c.getContext('2d').drawImage(img, 0, 0);
+                            return c.toDataURL('image/png').split(',')[1];
+                        }""")
+                        if img_b64:
+                            raw = base64.b64decode(img_b64)
+                            if is_valid_image(raw[:4]):
+                                page_path.with_suffix(".png").write_bytes(raw)
+                                captured.add(i)
                             else:
-                                log(f"  Page {i} still HTTP {resp2.status} after CDN solve")
+                                log(f"  Page {i} canvas too small ({len(raw)} bytes)")
                         else:
-                            log(f"  Page {i} HTTP 403")
+                            log(f"  Page {i} no <img> in DOM")
                     else:
-                        log(f"  Page {i} HTTP {resp.status}")
+                        # CDN blocked — stop trying remaining pages (they'll all fail)
+                        log(f"  Page {i} blocked (title: {title[:60]})")
+                        log(f"  CDN blocking detected after {len(captured)} successful page(s), stopping")
+                        cdn_blocked = True
+                        break
                 except Exception as exc:
                     log(f"  Page {i} failed: {exc}")
+                    cdn_blocked = True
+                    break  # likely CDN blocking, don't waste time
 
-                time.sleep(0.3)
+                # Random delay between pages (simulate human browsing)
+                delay = random.uniform(8, 18)
+                time.sleep(delay)
 
-            log(f"  Captured {len(captured)}/{len(needed)} page(s) via browser")
+                # Log progress every 10 pages
+                if (idx + 1) % 10 == 0:
+                    log(f"  Progress: {len(captured)}/{len(needed)} captured ({idx+1} processed)")
+
+            log(f"  Captured {len(captured)}/{len(needed)} page(s)")
 
             if len(captured) < len(needed):
                 try:
                     page.screenshot(path=str(DATA_DIR / "sushiscan-debug.png"), full_page=True)
-                    log(f"  DEBUG: screenshot saved to {DATA_DIR}/sushiscan-debug.png")
+                    log(f"  DEBUG: screenshot saved")
                 except Exception:
                     pass
 
         finally:
+            try:
+                cdn_page.close()
+            except Exception:
+                pass
             browser.close()
 
     failed_pages = [i for i, _, _, _ in needed if i not in captured]
-    return failed_pages
+    return failed_pages, cdn_blocked
 
 
 def run_sushiscan_pipeline(args, series: str, started: str, prev_status):
@@ -1006,6 +1145,14 @@ def run_sushiscan_pipeline(args, series: str, started: str, prev_status):
                 volumes[i]["state"] = "done"
                 completed_count += 1
                 update_status(completed=completed_count, volumes=volumes)
+            except CDNBlockedError as e:
+                err_msg = f"{entry_label}: {e}"
+                log(f"ERROR: {err_msg}")
+                errors.append(err_msg)
+                volumes[i]["state"] = "failed"
+                update_status(errors=errors, volumes=volumes)
+                log(f"CDN is blocking — stopping all remaining volumes. Retry later.")
+                break
             except Exception as e:
                 tb = traceback.format_exc()
                 err_msg = f"{entry_label}: {e}"
@@ -1016,8 +1163,9 @@ def run_sushiscan_pipeline(args, series: str, started: str, prev_status):
                 update_status(errors=errors, volumes=volumes)
 
             if i < total_count - 1:
-                log(f"Waiting {DELAY}s before next download...")
-                time.sleep(DELAY)
+                between_delay = random.uniform(45, 90)
+                log(f"Waiting {between_delay:.0f}s before next volume...")
+                time.sleep(between_delay)
 
         final_state = "completed" if completed_count == total_count else "failed"
         log(f"Done: {completed_count}/{total_count} entries for '{series}'")

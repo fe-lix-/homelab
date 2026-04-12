@@ -48,6 +48,8 @@ uptime_kuma_monitors:
     url: "http://host-gateway:{{ authelia_port }}"
   - name: Pi-hole
     url: "http://host-gateway:{{ pihole_port }}/admin"
+  - name: Screen Time
+    url: "http://host-gateway:{{ screentime_port }}/health"
   - name: UniFi
     url: "https://{{ base_gateway }}"
     accepted_statuscodes: ["200-299", "302"]

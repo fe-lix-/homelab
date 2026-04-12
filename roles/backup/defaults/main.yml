@@ -38,6 +38,7 @@ backup_paths:
   - /opt/minecraft/data
   - /opt/ntfy/config
   - /opt/ntfy/data
+  - /opt/screentime
   - /srv/photos
 backup_retention:
   keep_daily: 7

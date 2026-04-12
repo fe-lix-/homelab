@@ -1,0 +1,36 @@
+---
+- name: Create screentime directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ screentime_data_dir }}"
+    - "{{ screentime_data_dir }}/data"
+
+- name: Deploy screentime docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ screentime_data_dir }}/docker-compose.yml"
+    mode: "0600"
+  notify: Restart screentime
+
+- name: Deploy screentime collector script
+  ansible.builtin.template:
+    src: collector.py.j2
+    dest: "{{ screentime_data_dir }}/collector.py"
+    mode: "0644"
+  notify: Restart screentime
+
+- name: Deploy screentime config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ screentime_data_dir }}/config.yml"
+    mode: "0600"
+  no_log: true
+  notify: Restart screentime
+
+- name: Start screentime collector
+  community.docker.docker_compose_v2:
+    project_src: "{{ screentime_data_dir }}"
+    state: present

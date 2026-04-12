@@ -30,6 +30,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Homepage | Dashboard | `homelab.example.com` |
 | manga-scheduler | Drip-feeds manga from `/srv/uploads/mangas` into Komga library every 2 days (systemd timer) | — |
 | ntfy | Push notification server (publicly accessible, ntfy built-in auth) | `ntfy.homelab.example.com` |
+| Screen Time | Kids screen time monitoring via Pi-hole DNS analysis | `screentime.homelab.example.com` |
 
 ## Architecture
 
