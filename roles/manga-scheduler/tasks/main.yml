@@ -111,3 +111,41 @@
     name: manga-scheduler-ui.service
     enabled: true
     state: started
+
+# --- Chapter Checker ---
+
+- name: Deploy manga chapter checker script
+  ansible.builtin.template:
+    src: manga-chapter-checker.py.j2
+    dest: "{{ manga_scheduler_data_dir }}/manga-chapter-checker.py"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy manga-chapter-checker systemd service
+  ansible.builtin.template:
+    src: manga-chapter-checker.service.j2
+    dest: /etc/systemd/system/manga-chapter-checker.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy manga-chapter-checker systemd timer
+  ansible.builtin.template:
+    src: manga-chapter-checker.timer.j2
+    dest: /etc/systemd/system/manga-chapter-checker.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start manga-chapter-checker timer
+  ansible.builtin.systemd:
+    name: manga-chapter-checker.timer
+    enabled: true
+    state: started
+  when: manga_chapter_checker_manga | length > 0

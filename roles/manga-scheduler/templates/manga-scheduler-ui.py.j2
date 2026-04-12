@@ -263,7 +263,7 @@ def _render_download_section() -> str:
         html += (
             "    <form class='dl-form' method='post' action='/download'>\n"
             "      <div><label>URL</label><br>"
-            "<input type='text' name='url' placeholder='https://tomosmanga.com/...' required></div>\n"
+            "<input type='text' name='url' placeholder='https://tomosmanga.com/... or https://sushiscan.net/...' required></div>\n"
             "      <div><label>Series name (optional)</label><br>"
             "<input type='text' name='series' placeholder='Auto-detect'></div>\n"
             "      <button type='submit'>Start Download</button>\n"
@@ -556,8 +556,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
         url = params.get("url", [""])[0].strip()
         series = params.get("series", [""])[0].strip()
 
-        if not url or not url.startswith("https://tomosmanga.com/"):
-            self.send_redirect("/?msg=" + urllib.parse.quote("Invalid URL: must start with https://tomosmanga.com/") + "&err=1")
+        allowed = ("https://tomosmanga.com/", "https://sushiscan.net/")
+        if not url or not any(url.startswith(d) for d in allowed):
+            self.send_redirect("/?msg=" + urllib.parse.quote("Invalid URL: must be from tomosmanga.com or sushiscan.net") + "&err=1")
             return
 
         if is_download_running():

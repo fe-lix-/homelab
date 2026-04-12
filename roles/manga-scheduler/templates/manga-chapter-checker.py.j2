@@ -1,0 +1,319 @@
+#!/usr/bin/env python3
+"""Manga Chapter Checker — poll FoOlSlide sites for new chapters."""
+
+import grp
+import io
+import json
+import os
+import pwd
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+import zipfile
+from base64 import b64encode
+from pathlib import Path
+
+DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
+COMICS_DIR = Path("{{ manga_scheduler_comics_dir }}")
+STATE_FILE = DATA_DIR / "chapter-checker-state.json"
+KOMGA_URL = "http://127.0.0.1:{{ komga_port }}"
+KOMGA_USER = "{{ komga_admin_email }}"
+KOMGA_PASSWORD = "{{ komga_admin_password }}"
+NTFY_URL = "{{ manga_scheduler_ntfy_url }}"
+NTFY_TOKEN = "{{ manga_scheduler_ntfy_token }}"
+
+MANGA_LIST = [
+{% for m in manga_chapter_checker_manga %}
+    {
+        "url": "{{ m.url }}",
+        "series_name": "{{ m.series_name }}",
+        "ntfy_topic": "{{ m.ntfy_topic }}",
+    },
+{% endfor %}
+]
+
+SVC_MEDIA_UID = pwd.getpwnam("svc-media").pw_uid
+COMICS_RW_GID = grp.getgrnam("comics-rw").gr_gid
+
+USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+
+
+def fetch(url: str, timeout: int = 30) -> bytes:
+    """Fetch a URL with a browser-like User-Agent."""
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+def fetch_json(url: str) -> dict:
+    """Fetch and parse JSON from a URL."""
+    data = fetch(url)
+    return json.loads(data)
+
+
+def notify(topic: str, title: str, message: str, tags: str = "", priority: str = "default") -> None:
+    """Send a notification via ntfy."""
+    if not NTFY_TOKEN:
+        return
+    url = f"{NTFY_URL}/{topic}"
+    data = message.encode("utf-8")
+    headers = {
+        "Authorization": f"Bearer {NTFY_TOKEN}",
+        "Title": urllib.parse.quote(title, safe=" "),
+        "Priority": priority,
+    }
+    if tags:
+        headers["Tags"] = tags
+    req = urllib.request.Request(url, data=data, headers=headers)
+    try:
+        urllib.request.urlopen(req, timeout=10).close()
+    except Exception as exc:
+        print(f"Warning: ntfy notification failed: {exc}", file=sys.stderr)
+
+
+def scan_komga() -> None:
+    """Trigger a library scan on all Komga libraries."""
+    token = b64encode(f"{KOMGA_USER}:{KOMGA_PASSWORD}".encode()).decode()
+    headers = {"Authorization": f"Basic {token}"}
+    try:
+        req = urllib.request.Request(f"{KOMGA_URL}/api/v1/libraries", headers=headers)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            libraries = json.load(resp)
+        for lib in libraries:
+            lib_id = lib["id"]
+            scan_req = urllib.request.Request(
+                f"{KOMGA_URL}/api/v1/libraries/{lib_id}/scan",
+                data=b"",
+                headers=headers,
+                method="POST",
+            )
+            urllib.request.urlopen(scan_req, timeout=10).close()
+            print(f"Triggered Komga scan for library: {lib['name']!r}")
+    except Exception as exc:
+        print(f"Warning: Komga scan failed: {exc}", file=sys.stderr)
+
+
+def fix_permissions(path: Path) -> None:
+    """Set ownership to svc-media:comics-rw with correct permissions."""
+    for root, dirs, files in os.walk(path):
+        os.chown(root, SVC_MEDIA_UID, COMICS_RW_GID)
+        os.chmod(root, 0o2775)
+        for f in files:
+            fp = os.path.join(root, f)
+            os.chown(fp, SVC_MEDIA_UID, COMICS_RW_GID)
+            os.chmod(fp, 0o0664)
+
+
+def load_state() -> dict:
+    """Load chapter checker state from disk."""
+    if STATE_FILE.exists():
+        with STATE_FILE.open() as f:
+            return json.load(f)
+    return {}
+
+
+def save_state(state: dict) -> None:
+    """Save chapter checker state to disk."""
+    with STATE_FILE.open("w") as f:
+        json.dump(state, f, indent=2)
+
+
+def parse_slug(url: str) -> str:
+    """Extract manga slug from a fmteam.fr URL."""
+    # https://fmteam.fr/comics/blue-lock -> blue-lock
+    parts = url.rstrip("/").split("/")
+    return parts[-1]
+
+
+def get_chapters(url: str) -> list[dict]:
+    """Fetch chapter list from fmteam.fr API."""
+    slug = parse_slug(url)
+    api_url = f"https://fmteam.fr/api/comics/{slug}"
+    data = fetch_json(api_url)
+
+    comic = data.get("comic", data)
+    chapters = []
+    for ch in comic.get("chapters", []):
+        # Build chapter key: "342" or "340.2" for subchapters
+        ch_num = ch.get("chapter", "")
+        sub = ch.get("subchapter")
+        key = f"{ch_num}.{sub}" if sub else str(ch_num)
+        # Build reader URL path from the API response
+        ch_url = ch.get("url", "")
+        chapters.append({
+            "key": key,
+            "title": ch.get("title", ""),
+            "url": ch_url,
+        })
+    return chapters
+
+
+def get_chapter_pages(slug: str, chapter_url: str) -> list[str]:
+    """Fetch image URLs for a chapter from the fmteam.fr reader API."""
+    # Reader API: /api/read/{slug}/fr/ch/{number}[/sub/{sub}]
+    # chapter_url is e.g. "/read/blue-lock/fr/ch/342"
+    api_url = f"https://fmteam.fr/api{chapter_url}"
+    data = fetch_json(api_url)
+
+    chapter = data.get("chapter", data)
+    pages = chapter.get("pages", [])
+    if not pages:
+        raise RuntimeError(f"No pages found at {api_url}")
+    return pages
+
+
+def make_comicinfo_xml(series_name: str, chapter: dict, page_count: int) -> str:
+    """Generate ComicInfo.xml matching existing Komga metadata format."""
+    ch_key = chapter["key"]
+    ch_title = chapter["title"]
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
+        f'\t<Series>{series_name}</Series>',
+        f'\t<Number>{ch_key}</Number>',
+    ]
+    if ch_title:
+        lines.append(f'\t<Title>{ch_title}</Title>')
+    lines.extend([
+        f'\t<PageCount>{page_count}</PageCount>',
+        '\t<LanguageISO>fr</LanguageISO>',
+        '\t<Manga>YesAndRightToLeft</Manga>',
+        '</ComicInfo>',
+    ])
+    return "\n".join(lines)
+
+
+def download_chapter_cbz(slug: str, series_name: str, chapter: dict, dest_dir: Path) -> Path:
+    """Download all pages for a chapter and package as CBZ."""
+    pages = get_chapter_pages(slug, chapter["url"])
+
+    ch_key = chapter["key"]
+    # Match existing naming: "Chapitre 342.cbz", "Chapitre 340.2.cbz"
+    cbz_name = f"Chapitre {ch_key}.cbz"
+    cbz_path = dest_dir / cbz_name
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for i, page_url in enumerate(pages, 1):
+            # Ensure absolute URL
+            if page_url.startswith("//"):
+                page_url = "https:" + page_url
+            elif page_url.startswith("/"):
+                page_url = f"https://fmteam.fr{page_url}"
+
+            ext = os.path.splitext(urllib.parse.urlparse(page_url).path)[1] or ".jpg"
+            page_name = f"{i:02d}{ext}"
+
+            print(f"  Downloading page {i}/{len(pages)}")
+            img_data = fetch(page_url)
+            zf.writestr(page_name, img_data)
+            time.sleep(0.5)
+
+        # Add ComicInfo.xml for Komga metadata
+        comicinfo = make_comicinfo_xml(series_name, chapter, len(pages))
+        zf.writestr("ComicInfo.xml", comicinfo.encode("utf-8"))
+
+    with cbz_path.open("wb") as f:
+        f.write(buf.getvalue())
+
+    print(f"  Created: {cbz_path.name}")
+    return cbz_path
+
+
+def check_manga(url: str, series_name: str, state: dict) -> list[str]:
+    """Check a manga for new chapters. Returns list of downloaded chapter names."""
+    slug = parse_slug(url)
+    state_key = slug
+    known_chapters = set(state.get(state_key, []))
+
+    chapters = get_chapters(url)
+    if not chapters:
+        print("  No chapters found.")
+        return []
+
+    new_chapters = [ch for ch in chapters if ch["key"] not in known_chapters]
+    if not new_chapters:
+        print("  No new chapters.")
+        return []
+
+    dest_dir = COMICS_DIR / series_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    downloaded = []
+    for ch in new_chapters:
+        ch_key = ch["key"]
+        ch_title = ch["title"]
+        label = f"Ch. {ch_key}" + (f" - {ch_title}" if ch_title else "")
+        print(f"  New chapter: {label}")
+
+        try:
+            download_chapter_cbz(slug, series_name, ch, dest_dir)
+            known_chapters.add(ch_key)
+            downloaded.append(label)
+        except Exception as exc:
+            print(f"  Error downloading {label}: {exc}", file=sys.stderr)
+            continue
+
+        time.sleep(2)
+
+    state[state_key] = sorted(known_chapters)
+    fix_permissions(dest_dir)
+    return downloaded
+
+
+def main() -> None:
+    if not MANGA_LIST:
+        print("No manga configured, nothing to do.")
+        return
+
+    state = load_state()
+    any_downloaded = False
+    errors = []
+
+    for manga in MANGA_LIST:
+        url = manga["url"]
+        series_name = manga["series_name"]
+        ntfy_topic = manga["ntfy_topic"]
+
+        print(f"\n--- Checking: {series_name} ({url}) ---")
+
+        try:
+            downloaded = check_manga(url, series_name, state)
+        except Exception as exc:
+            error_msg = f"{series_name}: {exc}"
+            print(f"Error: {error_msg}", file=sys.stderr)
+            errors.append(error_msg)
+            notify(
+                "manga",
+                f"{series_name} - check failed",
+                str(exc),
+                tags="x",
+                priority="high",
+            )
+            continue
+
+        if downloaded:
+            any_downloaded = True
+            chapter_list = "\n".join(f"  - {c}" for c in downloaded)
+            count = len(downloaded)
+            print(f"Downloaded {count} new chapter(s):\n{chapter_list}")
+            notify(
+                ntfy_topic,
+                f"{series_name}",
+                f"{count} new chapter(s) downloaded:\n{chapter_list}",
+                tags="books",
+            )
+
+    save_state(state)
+
+    if any_downloaded:
+        scan_komga()
+
+    if errors:
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
