@@ -1,0 +1,10 @@
+[Unit]
+Description=Manga Chapter Checker — poll for new chapters via gallery-dl
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ manga_scheduler_data_dir }}/venv/bin/python {{ manga_scheduler_data_dir }}/manga-chapter-checker.py
+Nice=19
+IOSchedulingClass=idle

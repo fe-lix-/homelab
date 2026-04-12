@@ -10,3 +10,10 @@ manga_downloader_staging_dir: "{{ manga_scheduler_data_dir }}/staging"
 manga_scheduler_ntfy_url: "http://127.0.0.1:{{ ntfy_port }}"
 manga_scheduler_ntfy_topic: "manga"
 manga_scheduler_ntfy_token: ""  # set in vault: vault_manga_scheduler_ntfy_token
+
+# --- Chapter checker (gallery-dl) ---
+manga_chapter_checker_schedule: "*-*-* 06:00:00"
+manga_chapter_checker_manga: []
+#   - url: https://fmteam.fr/comics/blue-lock
+#     series_name: Blue Lock
+#     ntfy_topic: manga-bluelock
