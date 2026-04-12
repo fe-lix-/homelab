@@ -19,6 +19,7 @@ TARGET_BYTES = {{ manga_scheduler_target_mb }} * 1024 * 1024
 STATE_FILE = DATA_DIR / "state.json"
 PENDING_FILE = DATA_DIR / "pending.txt"
 TRIGGER_USER_FILE = DATA_DIR / "trigger-user.txt"
+SCHEDULE_FILE = DATA_DIR / "schedule.json"
 KOMGA_URL = "http://127.0.0.1:{{ komga_port }}"
 KOMGA_USER = "{{ komga_admin_email }}"
 KOMGA_PASSWORD = "{{ komga_admin_password }}"
@@ -195,6 +196,17 @@ def scan_komga(dry_run: bool) -> None:
         print(f"Warning: Komga scan failed: {exc}", file=sys.stderr)
 
 
+def load_schedule() -> list[str]:
+    """Load the active series list. Empty list means all series are active."""
+    if SCHEDULE_FILE.exists():
+        try:
+            data = json.loads(SCHEDULE_FILE.read_text())
+            return data.get("active_series", [])
+        except (json.JSONDecodeError, OSError):
+            pass
+    return []
+
+
 def consume_pending() -> str | None:
     """Read and delete the pending series file set by the UI. Returns series name or None."""
     if PENDING_FILE.exists():
@@ -253,7 +265,17 @@ def main() -> None:
         # Find its index so we can advance past it for the next auto-run
         chosen_index = series_order.index(forced_series) if forced_series in series_order else current_index
     else:
-        chosen_index, chosen_series = pick_series(series_order, current_index, discovered)
+        # Apply schedule filter: active series first, fallback to all
+        active_series = load_schedule()
+        if active_series:
+            filtered = {s: files for s, files in discovered.items() if s in active_series}
+            if filtered:
+                chosen_index, chosen_series = pick_series(series_order, current_index, filtered)
+            else:
+                # All active series exhausted — fall back to full list
+                chosen_index, chosen_series = pick_series(series_order, current_index, discovered)
+        else:
+            chosen_index, chosen_series = pick_series(series_order, current_index, discovered)
 
     if chosen_series is None:
         print("All series are empty. Nothing to do.")
