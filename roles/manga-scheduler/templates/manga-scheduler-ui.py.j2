@@ -7,6 +7,7 @@ import json
 import re
 import subprocess
 import urllib.parse
+import zipfile
 from html import escape
 from pathlib import Path
 
@@ -24,10 +25,48 @@ DOWNLOAD_STATUS_FILE = DATA_DIR / "download-status.json"
 DOWNLOAD_HISTORY_FILE = DATA_DIR / "download-history.json"
 DOWNLOAD_PID_FILE = DATA_DIR / "downloader.pid"
 TRIGGER_USER_FILE = DATA_DIR / "trigger-user.txt"
-TARGET_BYTES = {{ manga_scheduler_target_mb }} * 1024 * 1024
+TARGET_PAGES = {{ manga_scheduler_target_pages }}
 PORT = {{ manga_scheduler_ui_port }}
 {% raw %}
 COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
+
+
+def natural_sort_key(path: Path) -> list:
+    """Sort key that treats numeric parts as integers for natural ordering."""
+    return [
+        int(part) if part.isdigit() else part.lower()
+        for part in re.split(r"(\d+)", path.name)
+    ]
+
+
+def count_pages(filepath: Path) -> int:
+    """Count image pages inside a comic archive."""
+    suffix = filepath.suffix.lower()
+    if suffix == ".cbz":
+        try:
+            with zipfile.ZipFile(filepath) as zf:
+                return sum(
+                    1 for name in zf.namelist()
+                    if Path(name).suffix.lower() in IMAGE_EXTENSIONS
+                )
+        except zipfile.BadZipFile:
+            pass
+    elif suffix == ".cbr":
+        try:
+            result = subprocess.run(
+                ["7z", "l", "-slt", str(filepath)],
+                capture_output=True, text=True, timeout=30,
+            )
+            return sum(
+                1 for line in result.stdout.splitlines()
+                if line.startswith("Path = ")
+                and Path(line.split(" = ", 1)[1]).suffix.lower() in IMAGE_EXTENSIONS
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            pass
+    return 30
+
 
 VOLUME_SUFFIX_RE = re.compile(
     r"\s*-\s*(Tomo|Vol\.?|Volume|Book)\s+\d+.*$", re.IGNORECASE
@@ -51,8 +90,9 @@ def discover_series() -> dict:
     for entry in sorted(UPLOAD_DIR.iterdir()):
         if entry.is_dir():
             files = sorted(
-                f for f in entry.iterdir()
-                if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS
+                (f for f in entry.iterdir()
+                if f.is_file() and f.suffix.lower() in COMIC_EXTENSIONS),
+                key=natural_sort_key,
             )
             if files:
                 series[entry.name] = files
@@ -60,7 +100,7 @@ def discover_series() -> dict:
             name = series_name_from_file(entry.stem)
             series.setdefault(name, []).append(entry)
     for name in series:
-        series[name] = sorted(series[name])
+        series[name] = sorted(series[name], key=natural_sort_key)
     return series
 
 
@@ -217,7 +257,7 @@ def simulate_deliveries(series_map: dict, state: dict, active_series: list[str],
     for s, files in series_map.items():
         remaining[s] = {
             "count": len(files),
-            "total_bytes": sum(f.stat().st_size for f in files),
+            "total_pages": sum(count_pages(f) for f in files),
         }
 
     index = current_index % len(order) if order else 0
@@ -236,23 +276,24 @@ def simulate_deliveries(series_map: dict, state: dict, active_series: list[str],
             break
 
         r = remaining[picked]
-        # Estimate batch: all files if total <= target, else ~target bytes worth
-        if r["total_bytes"] <= TARGET_BYTES:
+        # Estimate batch: all files if total pages <= target, else accumulate until >= target
+        if r["total_pages"] <= TARGET_PAGES:
             est_files = r["count"]
+            est_pages = r["total_pages"]
         else:
-            avg_size = r["total_bytes"] / r["count"] if r["count"] else 1
-            est_files = max(1, min(r["count"], int(TARGET_BYTES / avg_size)))
-        est_mb = est_files * (r["total_bytes"] / r["count"]) / (1024 * 1024) if r["count"] else 0
+            avg_pages = r["total_pages"] / r["count"] if r["count"] else 1
+            est_files = max(1, min(r["count"], round(TARGET_PAGES / avg_pages)))
+            est_pages = round(est_files * avg_pages)
 
         preview.append({
             "series": picked,
             "files": est_files,
-            "size_mb": round(est_mb, 1),
+            "pages": est_pages,
             "remaining_after": r["count"] - est_files,
         })
 
         r["count"] -= est_files
-        r["total_bytes"] -= est_files * (r["total_bytes"] / (r["count"] + est_files)) if (r["count"] + est_files) else 0
+        r["total_pages"] -= est_pages
 
     return preview
 
@@ -626,7 +667,7 @@ def render_schedule(msg: str = "", error: bool = False) -> str:
                 f"<td class='preview-num'>#{i}</td>"
                 f"<td>{escape(p['series'])}</td>"
                 f"<td>~{p['files']} files</td>"
-                f"<td>~{p['size_mb']} MB</td>"
+                f"<td>~{p['pages']} pages</td>"
                 f"<td style='color:#6b7280'>{p['remaining_after']} left</td>"
                 f"</tr>"
             )
