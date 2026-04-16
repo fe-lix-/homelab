@@ -33,10 +33,10 @@
     owner: "{{ item.owner }}"
     mode: "{{ item.mode }}"
   loop:
-    - { path: "{{ pihole_data_dir }}",                   owner: root,              mode: "0755" }
-    - { path: "{{ pihole_data_dir }}/config",            owner: root,              mode: "0755" }
-    - { path: "{{ pihole_data_dir }}/config/dnsmasq.d",  owner: root,              mode: "0755" }
-    - { path: "{{ pihole_data_dir }}/config/pihole",     owner: "{{ pihole_user }}", mode: "0775" }
+    - {path: "{{ pihole_data_dir }}", owner: root, mode: "0755"}
+    - {path: "{{ pihole_data_dir }}/config", owner: root, mode: "0755"}
+    - {path: "{{ pihole_data_dir }}/config/dnsmasq.d", owner: root, mode: "0755"}
+    - {path: "{{ pihole_data_dir }}/config/pihole", owner: "{{ pihole_user }}", mode: "0775"}
 
 - name: Deploy Pi-hole docker-compose file
   ansible.builtin.template:

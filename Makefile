@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-role collections vault-edit vault-create check diff logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router generate-password
+.PHONY: deploy deploy-role collections vault-edit vault-create check diff lint logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router generate-password
 
 -include .env
 export
@@ -40,6 +40,11 @@ check:
 # Show diff of what would change
 diff:
 	ansible-playbook site.yml $(VAULT_ARG) --diff
+
+# Run yamllint and ansible-lint
+lint:
+	yamllint .
+	ansible-lint
 
 # Check backup logs on server
 logs-backup:

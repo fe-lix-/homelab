@@ -16,7 +16,7 @@
     owner: "{{ immich_user }}"
     mode: "{{ item.mode }}"
   loop:
-    - { path: "{{ immich_data_dir }}",   mode: "0750" }
+    - {path: "{{ immich_data_dir }}", mode: "0750"}
 
 - name: Deploy Immich docker-compose file
   ansible.builtin.template:

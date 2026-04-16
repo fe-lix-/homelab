@@ -1,0 +1,17 @@
+---
+profile: basic
+
+skip_list:
+  # Existing codebase uses shared vars (timezone, locale) without role prefix
+  - var-naming[no-role-prefix]
+  # Role names contain hyphens (e.g. uptime-kuma, manga-scheduler)
+  - role-name
+
+warn_list:
+  - no-changed-when
+  - no-handler
+  - risky-shell-pipe
+
+exclude_paths:
+  - .git/
+  - applications/

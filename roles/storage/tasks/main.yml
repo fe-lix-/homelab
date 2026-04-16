@@ -112,10 +112,10 @@
 - name: Migrate /srv ownership (one-time, run with -e migrate_srv_ownership=true)
   ansible.builtin.command: "chown -R {{ item.owner }}:{{ item.group }} {{ item.path }}"
   loop:
-    - { path: /srv/media,      owner: svc-arr,       group: media-rw }
-    - { path: /srv/downloads,  owner: svc-arr,       group: media-rw }
-    - { path: /srv/comics,     owner: svc-media,     group: comics-rw }
-    - { path: /srv/photos,     owner: svc-immich,    group: photos-rw }
-    - { path: /srv/paperless,  owner: svc-paperless, group: docs-rw }
+    - {path: /srv/media, owner: svc-arr, group: media-rw}
+    - {path: /srv/downloads, owner: svc-arr, group: media-rw}
+    - {path: /srv/comics, owner: svc-media, group: comics-rw}
+    - {path: /srv/photos, owner: svc-immich, group: photos-rw}
+    - {path: /srv/paperless, owner: svc-paperless, group: docs-rw}
   when: migrate_srv_ownership | default(false)
   changed_when: true
