@@ -44,6 +44,8 @@
       tags: immich
     - role: audiobookshelf
       tags: audiobookshelf
+    - role: nut
+      tags: nut
     - role: monitoring
       tags: monitoring
     - role: homeassistant

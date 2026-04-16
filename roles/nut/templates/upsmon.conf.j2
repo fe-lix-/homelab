@@ -1,0 +1,13 @@
+# {{ ansible_managed }}
+MONITOR {{ nut_ups_name }}@localhost {{ nut_minsupplies | default(1) }} upsmon {{ nut_upsmon_password }} master
+
+SHUTDOWNCMD "{{ nut_shutdown_cmd }}"
+POWERDOWNFLAG {{ nut_powerdown_flag }}
+
+POLLFREQ 5
+POLLFREQALERT 5
+HOSTSYNC 15
+DEADTIME 15
+FINALDELAY 5
+RBWARNTIME 43200
+NOCOMMWARNTIME 300

@@ -19,6 +19,28 @@ scrape_configs:
     static_configs:
       - targets: ["smartctl-exporter:9633"]
 
+  - job_name: "nut"
+    metrics_path: /ups_metrics
+    static_configs:
+      - targets: ["nut-exporter:9199"]
+
   - job_name: "screentime"
     static_configs:
       - targets: ["screentime-collector:9200"]
+
+  - job_name: "blackbox-internet"
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+{% for target in internet_probe_targets %}
+          - "{{ target }}"
+{% endfor %}
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

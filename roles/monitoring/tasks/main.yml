@@ -30,6 +30,13 @@
     mode: "0644"
   notify: Restart monitoring
 
+- name: Deploy Blackbox Exporter configuration
+  ansible.builtin.template:
+    src: blackbox.yml.j2
+    dest: "{{ monitoring_data_dir }}/blackbox.yml"
+    mode: "0644"
+  notify: Restart monitoring
+
 - name: Deploy Alloy configuration
   ansible.builtin.template:
     src: alloy-config.alloy.j2
@@ -74,6 +81,8 @@
     - server-overview.json.j2
     - temperatures.json.j2
     - screen-time.json.j2
+    - internet-connectivity.json.j2
+    - ups.json.j2
   notify: Restart monitoring
 
 - name: Deploy static Grafana dashboards

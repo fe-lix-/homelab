@@ -77,6 +77,10 @@
         icon: uptime-kuma.png
         href: "https://uptime.{{ base_domain }}/status/{{ ansible_hostname }}"
         description: Public status page
+    - UPS:
+        icon: mdi-battery-charging
+        href: "https://grafana.{{ base_domain }}/d/ups/ups"
+        description: Eaton 5E 700 power monitoring
     - Authelia:
         icon: authelia.png
         href: "https://auth.{{ base_domain }}"

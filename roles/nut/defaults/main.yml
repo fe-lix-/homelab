@@ -1,0 +1,13 @@
+---
+nut_ups_name: eaton
+nut_ups_driver: usbhid-ups
+nut_ups_port: auto
+nut_ups_desc: "Eaton 5E 700 USB DIN"
+nut_upsd_listen: "0.0.0.0"
+nut_upsd_port: 3493
+nut_admin_password: "CHANGE_ME"
+nut_upsmon_password: "CHANGE_ME"
+nut_shutdown_cmd: "/sbin/shutdown -h +0"
+nut_powerdown_flag: /etc/killpower
+nut_battery_low_charge: 20
+nut_battery_low_runtime: 60
