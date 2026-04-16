@@ -40,4 +40,3 @@
   community.docker.docker_compose_v2:
     project_src: "{{ komga_data_dir }}"
     state: present
-

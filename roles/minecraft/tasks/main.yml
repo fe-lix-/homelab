@@ -28,7 +28,6 @@
     group: root
     mode: "0644"
 
-
 - name: Deploy mc-proxy script
   ansible.builtin.template:
     src: mc-proxy.py.j2

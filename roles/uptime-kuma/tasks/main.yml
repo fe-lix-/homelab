@@ -27,4 +27,3 @@
   community.docker.docker_compose_v2:
     project_src: "{{ uptime_kuma_data_dir }}"
     state: present
-
