@@ -15,6 +15,8 @@ services:
     image: prom/prometheus:{{ prometheus_version }}
     container_name: prometheus
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - prometheus-data:/prometheus
       - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
@@ -52,6 +54,30 @@ services:
       - /dev/sdb:/dev/sdb
       - /dev/sdc:/dev/sdc
     environment:
+      TZ: "{{ timezone }}"
+
+  blackbox-exporter:
+    image: prom/blackbox-exporter:{{ blackbox_exporter_version }}
+    container_name: blackbox-exporter
+    restart: unless-stopped
+    volumes:
+      - ./blackbox.yml:/config/blackbox.yml:ro
+    command:
+      - "--config.file=/config/blackbox.yml"
+    environment:
+      TZ: "{{ timezone }}"
+
+  nut-exporter:
+    image: ghcr.io/druggeri/nut_exporter:{{ nut_exporter_version }}
+    container_name: nut-exporter
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NUT_EXPORTER_SERVER: "host.docker.internal"
+      NUT_EXPORTER_USERNAME: "upsmon"
+      NUT_EXPORTER_PASSWORD: "{{ nut_upsmon_password }}"
+      NUT_EXPORTER_VARIABLES: "battery.charge,battery.runtime,battery.voltage,battery.voltage.nominal,input.voltage,input.voltage.nominal,output.voltage,ups.load,ups.status,ups.realpower"
       TZ: "{{ timezone }}"
 
   cadvisor:

@@ -39,6 +39,7 @@ backup_paths:
   - /opt/ntfy/config
   - /opt/ntfy/data
   - /opt/screentime
+  - /etc/nut
   - /srv/photos
 backup_retention:
   keep_daily: 7

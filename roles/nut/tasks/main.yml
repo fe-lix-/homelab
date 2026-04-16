@@ -1,0 +1,55 @@
+---
+- name: Install NUT packages
+  ansible.builtin.apt:
+    name:
+      - nut-server
+      - nut-client
+    state: present
+  register: nut_installed
+
+- name: Reload udev rules for NUT USB permissions
+  ansible.builtin.command: udevadm control --reload-rules
+  when: nut_installed.changed
+
+- name: Trigger udev to apply NUT USB permissions
+  ansible.builtin.command: udevadm trigger --subsystem-match=usb
+  when: nut_installed.changed
+
+- name: Deploy NUT configuration
+  ansible.builtin.template:
+    src: "{{ item.src }}"
+    dest: "/etc/nut/{{ item.dest }}"
+    owner: root
+    group: nut
+    mode: "{{ item.mode }}"
+  loop:
+    - { src: nut.conf.j2, dest: nut.conf, mode: "0644" }
+    - { src: ups.conf.j2, dest: ups.conf, mode: "0640" }
+    - { src: upsd.conf.j2, dest: upsd.conf, mode: "0644" }
+    - { src: upsd.users.j2, dest: upsd.users, mode: "0640" }
+    - { src: upsmon.conf.j2, dest: upsmon.conf, mode: "0640" }
+  no_log: true
+  notify:
+    - Restart nut-driver
+    - Restart nut-server
+    - Restart nut-monitor
+
+- name: Allow Docker containers to reach upsd
+  community.general.ufw:
+    rule: allow
+    from_ip: 172.16.0.0/12
+    to_port: "{{ nut_upsd_port }}"
+    proto: tcp
+    comment: "NUT upsd for Docker nut-exporter"
+
+- name: Enable and start NUT server
+  ansible.builtin.systemd:
+    name: nut-server
+    enabled: true
+    state: started
+
+- name: Enable and start NUT monitor
+  ansible.builtin.systemd:
+    name: nut-monitor
+    enabled: true
+    state: started
