@@ -1,6 +1,6 @@
 [Unit]
 Description=Minecraft fake server (shows start message, triggers real server on connect)
-After=network.target
+After=network.target docker.service
 
 [Service]
 Type=simple
@@ -10,6 +10,13 @@ RestartSec=3
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=mc-fake-server
+User={{ minecraft_user }}
+Group=docker
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ minecraft_data_dir }}
 
 [Install]
 WantedBy=multi-user.target

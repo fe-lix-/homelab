@@ -7,7 +7,7 @@ LOCK="{{ minecraft_data_dir }}/mc-starting.lock"
 READY_FLAG="{{ minecraft_data_dir }}/mc-ready.flag"
 COMPOSE_DIR="{{ minecraft_data_dir }}"
 
-exec >> /var/log/mc-start.log 2>&1
+exec >> {{ minecraft_data_dir }}/mc-start.log 2>&1
 echo "$(date -Iseconds) mc-start.sh: triggered"
 
 touch "$LOCK"

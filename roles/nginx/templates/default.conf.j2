@@ -527,6 +527,7 @@ server {
     {{ ssl_params() }}
     {{ authelia_location() }}
     {{ favicon_location() }}
+    client_max_body_size {{ goploader_max_upload_size }};
 
     # Downloads — open to everyone (links contain the decryption key)
     location /v/ {

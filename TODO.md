@@ -14,6 +14,22 @@ Combined findings from the March 2026 security audits and Ansible reviews.
 
 ## Security — High
 
+- [ ] **Minecraft docker-compose rendered at 0644 with RCON password** — `roles/minecraft/tasks/main.yml:33-39`: The compose file embeds `RCON_PASSWORD` but is written at `mode: "0644"` with no `no_log`. Any local user on the host can read it; verbose ansible runs log it. Change to `mode: "0640"` owned by root with `no_log: true` (matching the pihole/immich/paperless pattern).
+
+- [ ] **Jellyfin `SSO-Auth.xml` deployed at 0644 with inline OIDC secret** — `roles/jellyfin/tasks/main.yml:32-37`: Template `SSO-Auth.xml.j2:13` renders `<OidSecret>{{ authelia_jellyfin_oidc_secret }}</OidSecret>` into a world-readable file. Set `mode: "0600"` owned by jellyfin user, add `no_log: true`.
+
+- [ ] **Immich OIDC client missing PKCE** — `roles/authelia/templates/configuration.yml.j2:130-147`: Immich registers the custom-scheme public redirect `app.immich:///oauth-callback` alongside web redirects with a shared static `client_secret` and no `require_pkce`. Any Android app can claim the scheme and intercept the authorization code; the secret is extractable from the mobile app binary. Add `require_pkce: true` and `pkce_challenge_method: S256`.
+
+- [ ] **Arr-stack Authelia bypass regex too broad** — `roles/authelia/templates/configuration.yml.j2:208-216`: `^/api.*` matches `/apifoo`, bare `/api`, and mutating endpoints like `/api/v3/command` (arbitrary downloads) and `/api/v1/system/backup/restore`. Anchor to `^/api/v[0-9]+/` and consider keeping mutating endpoints behind Authelia via a second rule.
+
+- [ ] **NUT `upsd` binds 0.0.0.0 with UFW allow on entire 172.16.0.0/12** — `roles/nut/defaults/main.yml:6`, `roles/nut/templates/upsd.conf.j2:2`, `roles/nut/tasks/main.yml:37-43`: The allow range is far broader than the Docker bridge subnets it was meant to cover. Any future VLAN/VPN/route into that /12 reaches port 3493 with only app-level auth (defaults `CHANGE_ME`). Bind to 127.0.0.1 + specific bridge IP; scope UFW to the actual bridge subnet.
+
+- [ ] **`screentime` container joined to Pi-hole and monitoring networks** — `roles/screentime/templates/docker-compose.yml.j2:16-27`: Joining `pihole_default` + `monitoring_default` gives east-west access to Pi-hole admin API (WEBPASSWORD) and every monitoring container (Grafana, Prometheus, Loki, cAdvisor, webhook-receiver). Remove `monitoring_default`; reach Pi-hole via host-gateway on its published port.
+
+- [ ] **`screentime-collector` runs `pip install` from PyPI at every container start as root** — `roles/screentime/templates/docker-compose.yml.j2:13-15`: Typosquat or mirror compromise = RCE as root on a container with access to Pi-hole and monitoring (see above). Bake deps into a built image with pinned hashes.
+
+- [ ] **Pi-hole runs with `cap_add: NET_ADMIN` without documented need** — `roles/pihole/templates/docker-compose.yml.j2:21-22`: Only required for Pi-hole's DHCP server mode. Without it, compromise is container-local; with it an attacker can manipulate netfilter/routes from inside the DNS container — ideal MITM position. Remove unless DHCP is actively used.
+
 - [x] **Restore brute-force protection** — `roles/security/tasks/main.yml`: fail2ban is explicitly removed (`state: absent`) with no replacement. Re-add fail2ban with an nginx/ssh jail, or add `limit_req_zone`/`limit_req` to the Authelia nginx server block.
 
 - [x] **Add `regulation:` block to Authelia** — `roles/authelia/templates/configuration.yml.j2`: No explicit brute-force lockout configured. Add: `regulation: {max_retries: 5, find_time: 2m, ban_time: 10m}`.
@@ -24,17 +40,41 @@ Combined findings from the March 2026 security audits and Ansible reviews.
 
 ## Security — Medium
 
-- [ ] **Restrict Pi-hole DNS port 53** — `roles/pihole/templates/docker-compose.yml.j2`: Docker bypasses UFW; port 53 is reachable from all network segments including VLAN 30. Add iptables DOCKER-USER rules to restrict port 53 to `10.0.0.0/8`.
+- [x] **Restrict Pi-hole DNS port 53** — Accepted risk: Pi-hole DNS should be reachable by all LAN devices (10.0.0.0/8, 192.168.0.0/16 including WireGuard VPN clients). Port 53 is not forwarded from the internet, so exposure is limited to devices already on the network. No DOCKER-USER iptables rules needed.
 
-- [ ] **Fix compose file permissions for secrets** — `roles/pihole/tasks/main.yml`, `roles/immich/tasks/main.yml`, `roles/paperless/tasks/main.yml`: Compose files containing plaintext secrets are deployed with `mode: "0644"`. Change to `mode: "0600"` and add `no_log: true` on deploy tasks (matching authelia/monitoring pattern).
+- [x] **Fix compose file permissions for secrets** — `roles/pihole/tasks/main.yml`, `roles/immich/tasks/main.yml`, `roles/paperless/tasks/main.yml`: Changed to `mode: "0600"` and added `no_log: true` (matching authelia/monitoring pattern).
 
-- [ ] **Restrict Samba by network** — `roles/samba/templates/smb.conf.j2` and `roles/samba/tasks/main.yml`: (1) No `hosts allow` directive in `smb.conf`; add `hosts allow = 10.0.0.0/8 127.0.0.1` to `[global]`. (2) The UFW rule uses the `Samba` predefined set which opens ports 137–445 from `0.0.0.0/0`; restrict with `src: 10.0.0.0/8`. Combined with `map to guest = Bad User`, any routed host can write to `/srv/uploads` unauthenticated.
+- [x] **Restrict Samba by network** — Added `hosts allow = 10.0.0.0/8 192.168.0.0/16 127.0.0.1` to `[global]` in `smb.conf.j2`. Restricted UFW rules to `10.0.0.0/8` and `192.168.0.0/16` (LAN + VPN).
 
-- [ ] **Harden Minecraft systemd services** — `roles/minecraft/templates/mc-fake-server.service.j2`, `mc-idle-watcher.service.j2`: Both run as root with no systemd hardening. Add `User=`, `NoNewPrivileges=true`, `ProtectSystem=strict`, `PrivateTmp=true`. The idle watcher can run as a non-root user with Docker socket group membership instead of root.
+- [x] **Harden Minecraft systemd services** — All three services (mc-proxy, mc-fake-server, mc-idle-watcher) now run as `svc-minecraft` with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`. Docker-accessing services use `Group=docker`. Scripts owned by `svc-minecraft`. mc-start.sh log moved from `/var/log` to data dir.
 
-- [ ] **Harden manga-scheduler systemd service** — `roles/manga-scheduler/templates/manga-scheduler.service.j2`: Runs as root with no systemd hardening. Add `NoNewPrivileges=true`, `ProtectSystem=strict`, `ReadWritePaths=/srv/comics /srv/uploads/mangas /opt/manga-scheduler`, or create a dedicated non-root user.
+- [x] **Harden manga-scheduler systemd service** — All three services (scheduler, chapter-checker, UI) hardened with `NoNewPrivileges`, `ProtectSystem=strict`, `ProtectHome`, `PrivateTmp`, `ReadWritePaths`. Kept running as root (needed for `os.chown()`).
 
-- [ ] **Add nginx upload size limit for Goploader** — `roles/nginx/templates/default.conf.j2`: No `client_max_body_size` on `files.homelab.example.com` server block. Add a sensible limit (e.g. `client_max_body_size 2G;`) matching Goploader's configured max file size.
+- [x] **Add nginx upload size limit for Goploader** — Added `client_max_body_size 2G` to the `files.` server block in nginx.
+
+- [ ] **Authelia `manga-scheduler` access rule references a group that doesn't exist** — `roles/authelia/templates/configuration.yml.j2:245-249`: The rule grants `group:manga-scheduler` which isn't in LLDAP. The manga-scheduler UI shells out to `systemctl` as root, so any future typo in the ACL could silently broaden access to a code-execution-adjacent surface. Either create the LLDAP group or change the rule to an existing group.
+
+- [ ] **No 2FA anywhere — global `one_factor` policy** — `roles/authelia/defaults/main.yml:9` plus every rule in `configuration.yml.j2`: TOTP is configured but never required. Password compromise → full admin on pihole/uptime/docs/screentime/manga-scheduler (root via systemd) and the arr/qbit/komga stack. Apply `two_factor` at minimum to admin-scoped rules and the manga-scheduler rule.
+
+- [ ] **Long-lived Authelia sessions** — `roles/authelia/templates/configuration.yml.j2:29-36`: `inactivity: 7d`, `expiration: 7d`, `remember_me: 30d` with cookie scoped at the apex `lab.delval.eu`. Stolen cookie = broad cross-service compromise for a month. Tighten to e.g. `inactivity: 4h`, `remember_me: 7d`, or disable `remember_me`.
+
+- [ ] **`node-exporter` mounts host `/` read-only with `pid: host`** — `roles/monitoring/templates/docker-compose.yml.j2:30-44`: Any RCE or container escape reads every file on host (`/etc/shadow`, all role config with secrets, TLS private keys) and observes every host process. Restrict the mount to `/proc`, `/sys`, `/etc/os-release`, `/etc/hostname`.
+
+- [ ] **`webhook-receiver` runs as root with mounted script** — `roles/monitoring/templates/docker-compose.yml.j2:135-147`: Bound to 127.0.0.1 but no `user:`, `cap_drop`, `read_only`, or `no-new-privileges`. Add `user: "65534:65534"`, `cap_drop: [ALL]`, `read_only: true`, `security_opt: [no-new-privileges:true]`.
+
+- [ ] **Missing `no_log: true` on secret-rendering template tasks** — Add to:
+  - `roles/manga-scheduler/tasks/main.yml` template tasks (~lines 65, 98, 128) — templates embed `KOMGA_PASSWORD` and `NTFY_TOKEN` as Python literals
+  - `roles/backup/tasks/main.yml:17-29` — templates embed `RESTIC_PASSWORD` and `B2_ACCOUNT_KEY`
+
+- [ ] **Unpinned local image `mediathekarr-local:latest`** — `roles/mediathekarr/templates/docker-compose.yml.j2:4`: Upstream base is digest-pinned but the local tag is floating. A stale or overwritten `latest` silently changes what runs. Tag with a content-addressed identifier (e.g. `mediathekarr-local:{{ mediathekarr_version[:12] }}`).
+
+- [ ] **Authelia `/api/authz/auth-request` forward-auth endpoint not rate-limited** — `roles/nginx/templates/default.conf.j2:149-175`: Rate limits apply only to `/api/firstfactor|secondfactor`. The forward-auth endpoint permits unthrottled session probing from any LAN host. Add a `limit_req` zone covering the forward-auth location.
+
+- [ ] **OIDC `consent_mode: implicit` on all five clients** — `roles/authelia/templates/configuration.yml.j2` (grafana/komga/immich/audiobookshelf/jellyfin blocks): First-party apps, so usually fine — but silent scope grants mean a rogue/compromised client can exfiltrate identity+groups with no user-visible step. Consider `explicit` for at least one admin-adjacent client.
+
+- [ ] **`brscan-skey.config.j2` and HA `configuration.yaml` deployed at 0644** — `roles/brscan/tasks/main.yml:95`, `roles/homeassistant/tasks/main.yml:19-28`: Both are natural homes for credentials (scanner `password=` field is already present but empty; HA integrations store API keys in `configuration.yaml`). Tighten to `mode: "0640"` now.
+
+- [ ] **Manga-scheduler UI writes unsanitized `Remote-Name`/`Remote-User` headers to disk** — `roles/manga-scheduler/templates/manga-scheduler-ui.py.j2:764,798`: Nginx sets the header from Authelia and the UI binds 127.0.0.1, so not currently exploitable, but no length/charset check defends against future nginx changes or header smuggling. Regex-validate (`[A-Za-z0-9._@-]{1,64}`) before `.write_text()`.
 
 ## Security — Low
 

@@ -1,4 +1,10 @@
 ---
+- name: Add svc-minecraft to docker group
+  ansible.builtin.user:
+    name: "{{ minecraft_user }}"
+    groups: docker
+    append: true
+
 - name: Get svc-minecraft uid/gid
   ansible.builtin.getent:
     database: passwd
@@ -32,8 +38,8 @@
   ansible.builtin.template:
     src: mc-proxy.py.j2
     dest: "{{ minecraft_data_dir }}/mc-proxy.py"
-    owner: root
-    group: root
+    owner: "{{ minecraft_user }}"
+    group: "{{ minecraft_user }}"
     mode: "0750"
   notify: Restart mc-proxy
 
@@ -41,8 +47,8 @@
   ansible.builtin.template:
     src: mc-fake-server.py.j2
     dest: "{{ minecraft_data_dir }}/mc-fake-server.py"
-    owner: root
-    group: root
+    owner: "{{ minecraft_user }}"
+    group: "{{ minecraft_user }}"
     mode: "0750"
   notify: Restart mc-fake-server
 
@@ -50,16 +56,16 @@
   ansible.builtin.template:
     src: mc-start.sh.j2
     dest: "{{ minecraft_data_dir }}/mc-start.sh"
-    owner: root
-    group: root
+    owner: "{{ minecraft_user }}"
+    group: "{{ minecraft_user }}"
     mode: "0750"
 
 - name: Deploy mc-idle-watcher script
   ansible.builtin.template:
     src: mc-idle-watcher.py.j2
     dest: "{{ minecraft_data_dir }}/mc-idle-watcher.py"
-    owner: root
-    group: root
+    owner: "{{ minecraft_user }}"
+    group: "{{ minecraft_user }}"
     mode: "0750"
 
 - name: Deploy mc-proxy systemd service
