@@ -7,6 +7,32 @@
   loop:
     - "{{ screentime_data_dir }}"
     - "{{ screentime_data_dir }}/data"
+    - "{{ screentime_data_dir }}/build"
+
+- name: Deploy screentime Dockerfile
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ screentime_data_dir }}/build/Dockerfile"
+    mode: "0644"
+  register: screentime_dockerfile
+
+- name: Deploy screentime requirements.txt
+  ansible.builtin.copy:
+    src: requirements.txt
+    dest: "{{ screentime_data_dir }}/build/requirements.txt"
+    mode: "0644"
+  register: screentime_requirements
+
+- name: Build screentime image with hash-pinned deps
+  community.docker.docker_image:
+    name: "{{ screentime_image_tag.split(':')[0] }}"
+    tag: "{{ screentime_image_tag.split(':')[1] }}"
+    source: build
+    force_source: "{{ screentime_dockerfile.changed or screentime_requirements.changed }}"
+    build:
+      path: "{{ screentime_data_dir }}/build"
+      pull: false
+  notify: Restart screentime
 
 - name: Deploy screentime docker-compose file
   ansible.builtin.template:

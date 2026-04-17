@@ -1,0 +1,7 @@
+FROM python:{{ screentime_version }}
+
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir --require-hashes -r requirements.txt
+
+CMD ["python3", "/app/collector.py"]

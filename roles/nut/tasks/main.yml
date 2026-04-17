@@ -34,10 +34,18 @@
     - Restart nut-server
     - Restart nut-monitor
 
-- name: Allow Docker containers to reach upsd
+- name: Remove legacy over-broad UFW rule for upsd
   community.general.ufw:
     rule: allow
     from_ip: 172.16.0.0/12
+    to_port: "{{ nut_upsd_port }}"
+    proto: tcp
+    delete: true
+
+- name: Allow monitoring bridge to reach upsd
+  community.general.ufw:
+    rule: allow
+    from_ip: "{{ nut_upsd_allowed_subnet }}"
     to_port: "{{ nut_upsd_port }}"
     proto: tcp
     comment: "NUT upsd for Docker nut-exporter"
