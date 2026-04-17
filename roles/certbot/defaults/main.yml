@@ -4,3 +4,5 @@ certbot_email: ""
 certbot_gandi_api_key: ""
 certbot_domain: "{{ base_domain }}"
 certbot_credentials_file: /etc/letsencrypt/gandi.ini
+# Additional standalone certs (one cert per entry, same Gandi DNS-01 method)
+certbot_extra_certs: []
