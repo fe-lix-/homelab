@@ -4,6 +4,7 @@ server string = Homelab Samba Server
 security = user
 map to guest = Bad User
 guest account = {{ samba_guest_user }}
+hosts allow = 10.0.0.0/8 192.168.0.0/16 127.0.0.1
 log file = /var/log/samba/log.%m
 max log size = 1000
 

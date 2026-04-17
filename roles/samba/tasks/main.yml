@@ -65,10 +65,17 @@
     validate: testparm -s %s
   notify: Restart samba
 
-- name: Allow Samba through UFW
+- name: Allow Samba through UFW (LAN)
   community.general.ufw:
     rule: allow
     name: Samba
+    from_ip: 10.0.0.0/8
+
+- name: Allow Samba through UFW (VPN)
+  community.general.ufw:
+    rule: allow
+    name: Samba
+    from_ip: 192.168.0.0/16
 
 - name: Enable and start Samba
   ansible.builtin.systemd:

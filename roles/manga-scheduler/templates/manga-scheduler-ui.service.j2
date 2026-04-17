@@ -7,6 +7,11 @@ Type=simple
 ExecStart=/usr/bin/python3 {{ manga_scheduler_data_dir }}/manga-scheduler-ui.py
 Restart=on-failure
 RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ manga_scheduler_data_dir }} {{ manga_scheduler_upload_dir }} {{ manga_scheduler_comics_dir }}
 
 [Install]
 WantedBy=multi-user.target

@@ -217,6 +217,7 @@
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "smooth",
+            "lineWidth": 1,
             "fillOpacity": 20,
             "spanNulls": false
           },
@@ -236,7 +237,8 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "network_ups_tools_battery_charge",
-          "legendFormat": "Charge %"
+          "legendFormat": "Charge %",
+          "range": true
         }
       ]
     },
@@ -251,6 +253,7 @@
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "smooth",
+            "lineWidth": 1,
             "fillOpacity": 20,
             "spanNulls": false
           },
@@ -270,7 +273,8 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "network_ups_tools_ups_load",
-          "legendFormat": "Load %"
+          "legendFormat": "Load %",
+          "range": true
         }
       ]
     },
@@ -283,6 +287,7 @@
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "smooth",
+            "lineWidth": 1,
             "fillOpacity": 20,
             "spanNulls": false
           },
@@ -302,7 +307,8 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "network_ups_tools_input_voltage",
-          "legendFormat": "Voltage"
+          "legendFormat": "Voltage",
+          "range": true
         }
       ]
     },
@@ -315,6 +321,7 @@
           "custom": {
             "drawStyle": "line",
             "lineInterpolation": "smooth",
+            "lineWidth": 1,
             "fillOpacity": 20,
             "spanNulls": false
           },
@@ -334,7 +341,8 @@
           "refId": "A",
           "datasource": { "type": "prometheus", "uid": "prometheus" },
           "expr": "network_ups_tools_battery_runtime",
-          "legendFormat": "Runtime"
+          "legendFormat": "Runtime",
+          "range": true
         }
       ]
     }
