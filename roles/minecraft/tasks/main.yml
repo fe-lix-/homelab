@@ -32,7 +32,8 @@
     dest: "{{ minecraft_data_dir }}/docker-compose.yml"
     owner: root
     group: root
-    mode: "0644"
+    mode: "0640"
+  no_log: true
 
 - name: Deploy mc-proxy script
   ansible.builtin.template:

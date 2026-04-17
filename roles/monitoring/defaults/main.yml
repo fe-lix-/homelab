@@ -12,6 +12,8 @@ grafana_port: 3002
 webhook_receiver_port: 9095
 monitoring_data_dir: /opt/monitoring
 monitoring_textfile_dir: /opt/monitoring/textfile
+monitoring_network_subnet: "172.21.0.0/16"
+monitoring_network_gateway: "172.21.0.1"
 grafana_admin_user: "admin"
 grafana_admin_password: "CHANGE_ME"
 loki_retention_period: "30d"

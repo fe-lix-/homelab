@@ -1,5 +1,6 @@
 ---
 screentime_version: "3.12-alpine"
+screentime_image_tag: "screentime-collector-local:3.12-alpine-1"
 screentime_port: 9200
 screentime_data_dir: /opt/screentime
 screentime_poll_interval: 60

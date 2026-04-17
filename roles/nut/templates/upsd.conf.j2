@@ -1,2 +1,4 @@
 # {{ ansible_managed }}
-LISTEN {{ nut_upsd_listen }} {{ nut_upsd_port }}
+{% for addr in nut_upsd_listen %}
+LISTEN {{ addr }} {{ nut_upsd_port }}
+{% endfor %}
