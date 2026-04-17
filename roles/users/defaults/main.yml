@@ -13,6 +13,8 @@ svc_pihole_uid: 2005
 svc_pihole_gid: 2005
 svc_minecraft_uid: 2006
 svc_minecraft_gid: 2006
+svc_games_uid: 2010
+svc_games_gid: 2010
 
 # Shared data group GIDs (3000–3999)
 # Used for /srv subdirectory ownership and setgid enforcement
@@ -20,3 +22,4 @@ media_rw_gid: 3001
 comics_rw_gid: 3002
 photos_rw_gid: 3003
 docs_rw_gid: 3004
+games_rw_gid: 3005

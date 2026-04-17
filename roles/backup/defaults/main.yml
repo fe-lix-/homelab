@@ -41,6 +41,7 @@ backup_paths:
   - /opt/screentime
   - /etc/nut
   - /srv/photos
+  - /srv/games
 backup_retention:
   keep_daily: 7
   keep_weekly: 4

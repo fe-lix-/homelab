@@ -38,3 +38,13 @@ force user = {{ samba_guest_user }}
 create mask = 0444
 force create mode = 0444
 directory mask = 0775
+
+[games]
+path = /srv/games
+comment = Games served at paul.delval.eu
+browseable = yes
+read only = yes
+write list = @games-rw
+valid users = @games-rw @{{ samba_rw_group }} @{{ samba_ro_group }}
+create mask = 0664
+directory mask = 2775

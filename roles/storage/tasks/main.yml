@@ -96,6 +96,14 @@
     group: docs-rw
     mode: "0750"
 
+- name: Ensure /srv/games ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/games
+    state: directory
+    owner: svc-games
+    group: games-rw
+    mode: "2775"
+
 - name: Ensure /srv/homes parent directory exists
   ansible.builtin.file:
     path: /srv/homes

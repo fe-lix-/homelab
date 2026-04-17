@@ -56,6 +56,12 @@
     gid: "{{ docs_rw_gid }}"
     state: present
 
+- name: Create shared data group games-rw
+  ansible.builtin.group:
+    name: games-rw
+    gid: "{{ games_rw_gid }}"
+    state: present
+
 # --- Service accounts ---
 # Non-login, no home directory. System: false with explicit UIDs for
 # reproducibility — avoids UID drift if the host is ever re-provisioned.
@@ -135,6 +141,24 @@
     name: svc-minecraft
     uid: "{{ svc_minecraft_uid }}"
     group: svc-minecraft
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create primary group for svc-games
+  ansible.builtin.group:
+    name: svc-games
+    gid: "{{ svc_games_gid }}"
+    state: present
+
+- name: Create service account svc-games
+  ansible.builtin.user:
+    name: svc-games
+    uid: "{{ svc_games_uid }}"
+    group: svc-games
+    groups:
+      - games-rw
+    append: true
     shell: /usr/sbin/nologin
     create_home: false
     state: present

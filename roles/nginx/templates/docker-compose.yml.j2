@@ -12,5 +12,6 @@ services:
       - "{{ nginx_data_dir }}/mc-forbidden.html:/usr/share/nginx/html/mc-forbidden.html:ro"
       - "{{ nginx_data_dir }}/favicon.svg:/usr/share/nginx/html/favicon.svg:ro"
       - "/etc/letsencrypt:/etc/letsencrypt:ro"
+      - "/srv/games:/srv/games:ro"
     environment:
       TZ: "{{ timezone }}"

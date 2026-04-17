@@ -48,6 +48,20 @@
       --non-interactive
     creates: "/etc/letsencrypt/live/{{ certbot_domain }}/fullchain.pem"
 
+- name: Obtain extra single-domain certificates
+  ansible.builtin.command:
+    cmd: >
+      /usr/local/bin/certbot certonly
+      --authenticator dns-gandi
+      --dns-gandi-credentials {{ certbot_credentials_file }}
+      --cert-name {{ item }}
+      -d "{{ item }}"
+      --agree-tos
+      --email {{ certbot_email }}
+      --non-interactive
+    creates: "/etc/letsencrypt/live/{{ item }}/fullchain.pem"
+  loop: "{{ certbot_extra_certs }}"
+
 - name: Deploy certbot-renew systemd service
   ansible.builtin.template:
     src: certbot-renew.service.j2
