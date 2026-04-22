@@ -33,8 +33,9 @@
     src: SSO-Auth.xml.j2
     dest: "{{ jellyfin_data_dir }}/config/plugins/configurations/SSO-Auth.xml"
     owner: "{{ jellyfin_user }}"
-    mode: "0644"
+    mode: "0600"
     force: false
+  no_log: true
 
 - name: Start Jellyfin
   community.docker.docker_compose_v2:
