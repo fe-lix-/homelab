@@ -50,6 +50,28 @@
     proto: tcp
     comment: "NUT upsd for Docker nut-exporter"
 
+- name: Create nut-server drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/nut-server.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy nut-server drop-in to start after Docker
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/nut-server.service.d/after-docker.conf
+    content: |
+      [Unit]
+      After=docker.service
+      Wants=docker.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify:
+    - Reload systemd daemon
+    - Restart nut-server
+
 - name: Enable and start NUT server
   ansible.builtin.systemd:
     name: nut-server

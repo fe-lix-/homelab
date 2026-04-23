@@ -20,7 +20,7 @@ Combined findings from the March 2026 security audits and Ansible reviews.
 
 - [x] **Immich OIDC client missing PKCE** — `roles/authelia/templates/configuration.yml.j2:130-147`: Added `require_pkce: true` and `pkce_challenge_method: S256` on the Immich client. End-to-end login verified working.
 
-- [ ] **Arr-stack Authelia bypass regex too broad** — `roles/authelia/templates/configuration.yml.j2:208-216`: `^/api.*` matches `/apifoo`, bare `/api`, and mutating endpoints like `/api/v3/command` (arbitrary downloads) and `/api/v1/system/backup/restore`. Anchor to `^/api/v[0-9]+/` and consider keeping mutating endpoints behind Authelia via a second rule.
+- [x] **Arr-stack Authelia bypass regex too broad** — `roles/authelia/templates/configuration.yml.j2:208-216`: `^/api.*` matches `/apifoo`, bare `/api`, and mutating endpoints like `/api/v3/command` (arbitrary downloads) and `/api/v1/system/backup/restore`. Anchor to `^/api/v[0-9]+/` and consider keeping mutating endpoints behind Authelia via a second rule.
 
 - [x] **NUT `upsd` binds 0.0.0.0 with UFW allow on entire 172.16.0.0/12** — Pinned monitoring Docker network to `172.21.0.0/16` (`roles/monitoring/defaults/main.yml`, compose `networks.default.ipam`). Changed `nut_upsd_listen` to a list `[127.0.0.1, 172.21.0.1]` rendered as two `LISTEN` lines. Swapped UFW rule to `172.21.0.0/16` (old `172.16.0.0/12` rule explicitly deleted). Also changed nut-exporter from `host.docker.internal:host-gateway` (which resolves to default-bridge `172.17.0.1`, now blocked) to the explicit monitoring gateway IP. Verified: upsd listens only on two IPs, LAN interface refuses connections, upsmon and nut-exporter both scrape successfully, Prometheus has current metric.
 
