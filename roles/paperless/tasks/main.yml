@@ -11,15 +11,15 @@
 
 - name: Create Paperless directories
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "{{ item.path }}"
     state: directory
     owner: svc-paperless
-    group: svc-paperless
+    group: "{{ item.group }}"
     mode: "0750"
   loop:
-    - "{{ paperless_data_dir }}"
-    - "{{ paperless_data_dir }}/consume"
-    - "{{ paperless_data_dir }}/consume/double-sided"
+    - { path: "{{ paperless_data_dir }}", group: svc-paperless }
+    - { path: "{{ paperless_data_dir }}/consume", group: docs-rw }
+    - { path: "{{ paperless_data_dir }}/consume/double-sided", group: docs-rw }
 
 - name: Deploy Paperless docker-compose file
   ansible.builtin.template:
