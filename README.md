@@ -11,6 +11,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Sonarr | TV show management | `sonarr.homelab.example.com` |
 | Radarr | Movie management | `radarr.homelab.example.com` |
 | Lidarr | Music management | `lidarr.homelab.example.com` |
+| Navidrome | Music streaming server (Subsonic API) | `music.homelab.example.com` |
 | Prowlarr | Indexer manager | `prowlarr.homelab.example.com` |
 | Bazarr | Subtitle management | `bazarr.homelab.example.com` |
 | MediathekArr | German public TV indexer (routed via VLAN 30 German VPN) | `mediathek.homelab.example.com` |

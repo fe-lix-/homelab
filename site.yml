@@ -28,6 +28,8 @@
       tags: radarr
     - role: lidarr
       tags: lidarr
+    - role: navidrome
+      tags: navidrome
     - role: byparr
       tags: byparr
     - role: prowlarr

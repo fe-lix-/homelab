@@ -1,0 +1,23 @@
+---
+services:
+  navidrome:
+    image: deluan/navidrome:{{ navidrome_version }}
+    container_name: navidrome
+    restart: unless-stopped
+    user: "{{ navidrome_uid }}:{{ navidrome_gid }}"
+    ports:
+      - "127.0.0.1:{{ navidrome_port }}:4533"
+    volumes:
+      - "{{ navidrome_data_dir }}/data:/data"
+      - "{{ navidrome_data_dir }}/cache:/cache"
+      - "{{ navidrome_music_dir }}:/music:ro"
+    environment:
+      ND_DATAFOLDER: /data
+      ND_CACHEFOLDER: /cache
+      ND_MUSICFOLDER: /music
+      ND_LOGLEVEL: info
+      ND_SCANSCHEDULE: "1h"
+      ND_SESSIONTIMEOUT: 720h
+      ND_BASEURL: ""
+      ND_REVERSEPROXYWHITELIST: "172.16.0.0/12,127.0.0.0/8"
+      TZ: "{{ timezone }}"

@@ -14,3 +14,11 @@ services:
       PUID: "{{ lidarr_uid }}"
       PGID: "{{ lidarr_gid }}"
       TZ: "{{ timezone }}"
+    networks:
+      - default
+      - arr
+
+networks:
+  arr:
+    name: arr
+    external: true
