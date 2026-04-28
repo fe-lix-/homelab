@@ -13,6 +13,7 @@ backup_paths:
   - /opt/sonarr/config
   - /opt/radarr/config
   - /opt/lidarr/config
+  - /opt/navidrome/data
   - /opt/bazarr/config
   - /opt/prowlarr/config
   - /opt/qbittorrent/config

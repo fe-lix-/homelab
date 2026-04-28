@@ -22,6 +22,8 @@ uptime_kuma_monitors:
     url: "http://host-gateway:{{ radarr_port }}"
   - name: Lidarr
     url: "http://host-gateway:{{ lidarr_port }}"
+  - name: Navidrome
+    url: "http://host-gateway:{{ navidrome_port }}/ping"
   - name: Prowlarr
     url: "http://host-gateway:{{ prowlarr_port }}"
   - name: Bazarr

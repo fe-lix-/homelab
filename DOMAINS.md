@@ -65,6 +65,7 @@ All `*.lab.delval.eu` names below resolve only to `10.0.0.163`, so they are not 
 | `grafana.lab.delval.eu` | Grafana | OIDC (`grafana`) |
 | `ha.lab.delval.eu` | Home Assistant | Self (HA native auth + MFA) |
 | `audiobooks.lab.delval.eu` | Audiobookshelf | OIDC (`audiobook`) |
+| `music.lab.delval.eu` | Navidrome (Subsonic API music server) | Native (Subsonic clients can't do OIDC) |
 | `files.lab.delval.eu` | Goploader — `/v/...` open downloads, `/` is landing page from public / Authelia-protected upload UI from LAN | Mixed |
 | `docs.lab.delval.eu` | Paperless-ngx | Authelia forward-auth (`admin`) |
 | `pihole.lab.delval.eu` | Pi-hole admin | Authelia forward-auth (`admin`) |

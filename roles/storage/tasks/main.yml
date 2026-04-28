@@ -44,6 +44,14 @@
     group: media-rw
     mode: "2775"
 
+- name: Ensure /srv/media/podcasts ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/media/podcasts
+    state: directory
+    owner: svc-media
+    group: media-rw
+    mode: "2775"
+
 - name: Ensure /srv/downloads ownership and setgid mode
   ansible.builtin.file:
     path: /srv/downloads

@@ -8,6 +8,7 @@ services:
       - "127.0.0.1:{{ audiobookshelf_port }}:80"
     volumes:
       - "{{ audiobookshelf_media_dir }}:/audiobooks"
+      - "{{ audiobookshelf_podcasts_dir }}:/podcasts"
       - "{{ audiobookshelf_data_dir }}/config:/config"
       - "{{ audiobookshelf_data_dir }}/metadata:/metadata"
     environment:

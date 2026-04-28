@@ -1,0 +1,6 @@
+---
+navidrome_version: "0.55.0"
+navidrome_port: 4533
+navidrome_data_dir: /opt/navidrome
+navidrome_music_dir: /srv/media/music
+navidrome_user: svc-media
