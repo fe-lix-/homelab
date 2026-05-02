@@ -1,0 +1,12 @@
+---
+# Note: host and port are CLI-only in pywidevine 1.8 — set in the Dockerfile CMD.
+# The users dict is keyed by the secret value (NOT username) — pywidevine looks
+# up the X-Secret-Key header against this map.
+users:
+  "{{ joynarr_pywidevine_secret }}":
+    username: joynarr
+    devices:
+      - {{ joynarr_pywidevine_device }}
+
+devices:
+  - /config/{{ joynarr_pywidevine_device }}.wvd

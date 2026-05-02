@@ -20,6 +20,39 @@
     - "{{ joynarr_data_dir }}/app"
     - "{{ joynarr_data_dir }}/downloads"
 
+- name: Create JoynArr state directory
+  ansible.builtin.file:
+    path: "{{ joynarr_state_dir }}"
+    state: directory
+    owner: "{{ joynarr_uid }}"
+    group: "{{ joynarr_gid }}"
+    mode: "0755"
+
+- name: Create JoynArr CDM directory
+  ansible.builtin.file:
+    path: "{{ joynarr_cdm_dir }}"
+    state: directory
+    mode: "0700"
+
+- name: Deploy pywidevine serve.yml
+  ansible.builtin.template:
+    src: serve.yml.j2
+    dest: "{{ joynarr_cdm_dir }}/serve.yml"
+    mode: "0600"
+  notify: Restart joynarr
+
+- name: Check Widevine device file is present
+  ansible.builtin.stat:
+    path: "{{ joynarr_cdm_dir }}/{{ joynarr_pywidevine_device }}.wvd"
+  register: joynarr_wvd_stat
+
+- name: Warn if Widevine device file is missing
+  ansible.builtin.debug:
+    msg: >
+      Widevine device file not found at {{ joynarr_cdm_dir }}/{{ joynarr_pywidevine_device }}.wvd —
+      copy a .wvd file there before downloads will work. The pywidevine container will fail to start until then.
+  when: not joynarr_wvd_stat.stat.exists
+
 - name: Sync JoynArr source
   ansible.posix.synchronize:
     src: "{{ playbook_dir }}/applications/JoynArr/"

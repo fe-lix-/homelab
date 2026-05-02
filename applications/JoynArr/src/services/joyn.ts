@@ -2,6 +2,7 @@ import { fetch, ProxyAgent, Agent, buildConnector } from 'undici';
 import { SocksClient } from 'socks';
 import * as tls from 'tls';
 import { randomUUID } from 'crypto';
+import { recordSeries, listSeries } from './tracked-series.js';
 
 // ---------------------------------------------------------------------------
 // Auth proxy helpers (lazy — reads BRIGHTDATA_PROXY_URL at call time)
@@ -362,6 +363,7 @@ export async function searchJoyn(query: string, season?: number): Promise<JoynEp
   const episodes: JoynEpisode[] = [];
   for (const result of data.search.results) {
     if (result.__typename !== 'Series' || !result.episodes || !result.title) continue;
+    void recordSeries(result.id, result.title);
     for (const ep of result.episodes) {
       if (season != null && ep.season?.number !== season) continue;
       episodes.push(mapEpisode(ep, result.title));
@@ -372,44 +374,82 @@ export async function searchJoyn(query: string, season?: number): Promise<JoynEp
   return episodes;
 }
 
+async function fetchSeriesEpisodes(id: string): Promise<JoynEpisode[]> {
+  const result = await graphqlRequest<SeriesData>(GQL_SERIES_EPISODES, { id });
+  const series = result?.series;
+  if (!series?.episodes) return [];
+  void recordSeries(series.id, series.title);
+  return series.episodes.map(ep => mapEpisode(ep, series.title));
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let cursor = 0;
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (true) {
+      const i = cursor++;
+      if (i >= items.length) return;
+      results[i] = await fn(items[i]);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
+
 /**
- * Fetch the most recently published episodes from Joyn via the "Neu auf Joyn" editorial lane.
+ * Fetch the most recently published episodes from Joyn.
+ *
+ * Sources:
+ *   1. The "Neu auf Joyn" editorial lane (seeds new shows we haven't seen yet)
+ *   2. The persistent tracked-series registry (every show searchJoyn has ever returned)
+ *
+ * Series IDs from both sources are merged, queried for their full episode lists in
+ * parallel, then deduped by episode ID and sorted by air date.
  */
 export async function getLatestEpisodes(limit = 50): Promise<JoynEpisode[]> {
   console.log(`[${timestamp()}] [Joyn] getLatestEpisodes limit=${limit}`);
 
+  const seriesIds = new Set<string>();
+
   const landingData = await graphqlRequest<LandingPageData>(GQL_LANDING_PAGE, {});
-  if (!landingData?.page?.blocks) {
+  if (landingData?.page?.blocks) {
+    const neuLane = landingData.page.blocks.find(
+      b => b.__typename === 'StandardLane' && b.headline?.toLowerCase().includes('neu')
+    );
+    if (neuLane?.assets) {
+      for (const asset of neuLane.assets) {
+        if (asset.__typename === 'Series') {
+          seriesIds.add(asset.id);
+          if (asset.title) void recordSeries(asset.id, asset.title);
+        }
+      }
+    } else {
+      console.warn(`[${timestamp()}] [Joyn] getLatestEpisodes: "Neu auf Joyn" lane not found`);
+    }
+  } else {
     console.warn(`[${timestamp()}] [Joyn] getLatestEpisodes: landing page returned no blocks`);
-    return [];
   }
 
-  const neuLane = landingData.page.blocks.find(
-    b => b.__typename === 'StandardLane' && b.headline?.toLowerCase().includes('neu')
-  );
+  const tracked = await listSeries();
+  for (const s of tracked) seriesIds.add(s.id);
 
-  if (!neuLane?.assets) {
-    console.warn(`[${timestamp()}] [Joyn] getLatestEpisodes: "Neu auf Joyn" lane not found`);
-    return [];
-  }
+  const ids = Array.from(seriesIds);
+  console.log(`[${timestamp()}] [Joyn] getLatestEpisodes querying ${ids.length} series (${tracked.length} tracked)`);
 
-  const seriesIds = neuLane.assets
-    .filter(a => a.__typename === 'Series')
-    .map(a => a.id);
+  const perSeries = await mapWithConcurrency(ids, 8, fetchSeriesEpisodes);
 
-  const seriesResults = await Promise.all(
-    seriesIds.map(id => graphqlRequest<SeriesData>(GQL_SERIES_EPISODES, { id }))
-  );
-
-  const allEpisodes: JoynEpisode[] = [];
-  for (const result of seriesResults) {
-    if (!result?.series?.episodes) continue;
-    const { series } = result;
-    for (const ep of series.episodes!) {
-      allEpisodes.push(mapEpisode(ep, series.title));
+  const byId = new Map<string, JoynEpisode>();
+  for (const eps of perSeries) {
+    for (const ep of eps) {
+      if (!byId.has(ep.id)) byId.set(ep.id, ep);
     }
   }
 
+  const allEpisodes = Array.from(byId.values());
   allEpisodes.sort((a, b) => {
     const ta = a.airDate ? new Date(a.airDate).getTime() : 0;
     const tb = b.airDate ? new Date(b.airDate).getTime() : 0;
@@ -417,6 +457,6 @@ export async function getLatestEpisodes(limit = 50): Promise<JoynEpisode[]> {
   });
 
   const limited = allEpisodes.slice(0, limit);
-  console.log(`[${timestamp()}] [Joyn] getLatestEpisodes returned ${limited.length} episodes`);
+  console.log(`[${timestamp()}] [Joyn] getLatestEpisodes returned ${limited.length} episodes (from ${allEpisodes.length} total)`);
   return limited;
 }

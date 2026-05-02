@@ -10,6 +10,7 @@ services:
       - "127.0.0.1:{{ joynarr_downloader_port }}:5007"
     volumes:
       - "{{ joynarr_downloads_dir }}:/app/downloads"
+      - "{{ joynarr_state_dir }}:/app/state"
     environment:
       TZ: "{{ timezone }}"
       INDEXER_PORT: "{{ joynarr_indexer_port }}"
@@ -17,9 +18,23 @@ services:
       DOWNLOAD_FOLDER_PATH_MAPPING: "/downloads"
       TVDB_API_BASE_URL: "{{ joynarr_tvdb_api_base_url }}"
       BRIGHTDATA_PROXY_URL: "{{ joynarr_sock5_proxy_url }}"
+      REMOTE_CDM_HOST: "http://pywidevine:8786"
+      REMOTE_CDM_DEVICE: "{{ joynarr_pywidevine_device }}"
+      REMOTE_CDM_SECRET: "{{ joynarr_pywidevine_secret }}"
+    depends_on:
+      - pywidevine
     networks:
       - default
       - arr
+
+  pywidevine:
+    build: ./app/pywidevine
+    container_name: joynarr-pywidevine
+    restart: unless-stopped
+    volumes:
+      - "{{ joynarr_cdm_dir }}:/config:ro"
+    networks:
+      - default
 
 networks:
   arr:
