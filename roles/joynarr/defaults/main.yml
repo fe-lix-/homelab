@@ -1,5 +1,6 @@
 ---
 joynarr_data_dir: /opt/joynarr
+joynarr_state_dir: /opt/joynarr/state
 joynarr_indexer_port: 5008
 joynarr_downloader_port: 5009
 joynarr_downloads_dir: /srv/downloads
@@ -12,3 +13,11 @@ joynarr_tvdb_api_base_url: ""
 # Set in vault: joynarr_sock5_proxy_url
 joynarr_sock5_proxy_url: ""
 joynarr_user: svc-arr
+
+# Self-hosted pywidevine RemoteCDM (replaces public cdrm-project.com).
+# Requires a Widevine .wvd device file at {{ joynarr_cdm_dir }}/{{ joynarr_pywidevine_device }}.wvd
+# (sourced out-of-band — extract from your own Android device or similar).
+# Set in vault: joynarr_pywidevine_secret
+joynarr_cdm_dir: /opt/joynarr/cdm
+joynarr_pywidevine_device: device
+joynarr_pywidevine_secret: ""
