@@ -8,8 +8,17 @@ services:
       - "127.0.0.1:{{ bazarr_port }}:6767"
     volumes:
       - "{{ bazarr_data_dir }}/config:/config"
-      - "{{ bazarr_media_dir }}:/media"
+      - "{{ bazarr_media_dir }}/tv:/tv"
+      - "{{ bazarr_media_dir }}/movies:/movies"
     environment:
       PUID: "{{ bazarr_uid }}"
       PGID: "{{ bazarr_gid }}"
       TZ: "{{ timezone }}"
+    networks:
+      - default
+      - arr
+
+networks:
+  arr:
+    name: arr
+    external: true

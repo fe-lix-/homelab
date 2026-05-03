@@ -81,7 +81,7 @@ limit_req_zone $binary_remote_addr zone=authelia_login:10m rate=10r/m;
 # Redirect all HTTP to HTTPS
 server {
     listen 80;
-    server_name {{ base_domain }} *.{{ base_domain }} {{ paul_domain }}{% if paul_extra_domain is defined %} {{ paul_extra_domain }}{% endif %}{% if home_domain is defined %} {{ home_domain }}{% endif %};
+    server_name {{ base_domain }} *.{{ base_domain }} {{ paul_domain }}{% if paul_extra_domain is defined %} {{ paul_extra_domain }}{% endif %}{% if home_domain is defined %} {{ home_domain }}{% endif %}{% if vaultwarden_domain is defined %} {{ vaultwarden_domain }}{% endif %};
     return 301 https://$host$request_uri;
 }
 
@@ -800,6 +800,72 @@ server {
 
     location / {
         rewrite ^ /landing.html last;
+    }
+}
+{% endif %}
+
+{% if vaultwarden_domain is defined %}
+# {{ vaultwarden_domain }} — Vaultwarden, public-facing.
+# Has its own LE cert (the wildcard only covers *.{{ base_domain }}).
+# No local_guard on the app itself: clients (mobile/desktop/extension) need
+# internet access. /admin is restricted to LAN/VPN — see below.
+#
+# Note: only HSTS is added at the proxy layer. Vaultwarden sets its own
+# CSP / X-Frame-Options / X-Content-Type-Options / Referrer-Policy and
+# intentionally omits some of them on /<...>-connector.html pages so they
+# can be iframed during 2FA flows. Adding them here breaks the diagnostic
+# 2FA Connector check and can break Duo/WebAuthn redirects.
+server {
+    listen {{ nginx_port }} ssl;
+    server_name {{ vaultwarden_domain }};
+    http2 on;
+    ssl_certificate /etc/letsencrypt/live/{{ vaultwarden_domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ vaultwarden_domain }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    server_tokens off;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    # Vault attachments can be sizeable
+    client_max_body_size 525M;
+
+    {{ favicon_location() }}
+
+    # Admin panel — LAN/VPN only (the admin token is the only auth here)
+    location /admin {
+        if ($local_access = 0) { return 403; }
+        proxy_pass http://127.0.0.1:{{ vaultwarden_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Real-time sync websocket — covers both /notifications/hub (authenticated
+    # client sync) and /notifications/anonymous-hub (login-with-device + the
+    # admin diagnostics WS check)
+    location /notifications/ {
+        proxy_pass http://127.0.0.1:{{ vaultwarden_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:{{ vaultwarden_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 {% endif %}

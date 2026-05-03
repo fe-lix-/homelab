@@ -1,0 +1,38 @@
+---
+- name: Validate vaultwarden_admin_token
+  ansible.builtin.assert:
+    that:
+      - vaultwarden_admin_token | length > 0
+    fail_msg: "Set vaultwarden_admin_token in inventories/production/group_vars/all/vault.yml before deploying the vaultwarden role."
+
+- name: Create vaultwarden directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ vaultwarden_data_dir }}"
+    - "{{ vaultwarden_data_dir }}/data"
+
+- name: Deploy vaultwarden docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ vaultwarden_data_dir }}/docker-compose.yml"
+    mode: "0640"
+  notify: Restart vaultwarden
+
+- name: Start vaultwarden
+  community.docker.docker_compose_v2:
+    project_src: "{{ vaultwarden_data_dir }}"
+    state: present
+  ignore_errors: "{{ ansible_check_mode }}"
+
+- name: Wait for vaultwarden to be ready
+  ansible.builtin.uri:
+    url: "http://127.0.0.1:{{ vaultwarden_port }}/alive"
+    status_code: 200
+  register: vaultwarden_health
+  until: vaultwarden_health.status == 200
+  retries: 12
+  delay: 5
+  when: not ansible_check_mode
