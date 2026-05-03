@@ -39,6 +39,7 @@ backup_paths:
   - /opt/minecraft/data
   - /opt/ntfy/config
   - /opt/ntfy/data
+  - /opt/vaultwarden/data
   - /opt/screentime
   - /etc/nut
   - /srv/photos

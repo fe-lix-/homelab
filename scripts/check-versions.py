@@ -107,6 +107,7 @@ GITHUB_SERVICES = [
     ("goploader", "goploader_version", "Depado/goploader", lambda t: t.lstrip("v")),
     ("authelia", "authelia_version", "authelia/authelia", lambda t: t.lstrip("v")),
     ("homeassistant", "homeassistant_version", "home-assistant/core", lambda t: t.lstrip("v")),
+    ("vaultwarden", "vaultwarden_version", "dani-garcia/vaultwarden", lambda t: t.lstrip("v")),
 ]
 
 LINUXSERVER_SERVICES = [

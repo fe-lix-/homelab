@@ -61,6 +61,8 @@ uptime_kuma_monitors:
     port: "{{ minecraft_port }}"
   - name: ntfy
     url: "http://host-gateway:{{ ntfy_port }}/v1/health"
+  - name: Vaultwarden
+    url: "http://host-gateway:{{ vaultwarden_port }}/alive"
   - name: Paul's Games
     url: "https://{{ paul_domain }}"
     accepted_statuscodes: ["200-299", "403", "404"]

@@ -33,6 +33,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | ntfy | Push notification server (publicly accessible, ntfy built-in auth) | `ntfy.homelab.example.com` |
 | Screen Time | Kids screen time monitoring via Pi-hole DNS analysis | `screentime.homelab.example.com` |
 | Paul's Games | Static public-facing games site, content uploaded via the Samba `games` share (`@games-rw`) | `paul.delval.eu` (own LE cert, public-facing) |
+| Vaultwarden | Bitwarden-compatible password manager, public-facing (own LE cert). `/admin` panel restricted to LAN/VPN. | `vault.delval.eu` |
 
 ## Architecture
 
@@ -102,6 +103,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
    vault_router_ssh_password: ""   # UniFi router root SSH password
    pihole_admin_password: ""
    ntfy_admin_password: ""
+   vaultwarden_admin_token: ""           # python3 -c "import secrets; print(secrets.token_urlsafe(48))"
    lldap_admin_password: ""
    lldap_jwt_secret: ""                   # openssl rand -hex 32
    lldap_bind_password: ""               # password for svc-authelia LDAP bind user (create manually in LLDAP UI)

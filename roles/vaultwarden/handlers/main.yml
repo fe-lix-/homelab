@@ -1,0 +1,6 @@
+---
+- name: Restart vaultwarden
+  community.docker.docker_compose_v2:
+    project_src: "{{ vaultwarden_data_dir }}"
+    state: restarted
+  ignore_errors: "{{ ansible_check_mode }}"

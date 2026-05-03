@@ -1,0 +1,19 @@
+---
+services:
+  vaultwarden:
+    image: docker.io/vaultwarden/server:{{ vaultwarden_version }}
+    container_name: vaultwarden
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ vaultwarden_port }}:80"
+    volumes:
+      - "{{ vaultwarden_data_dir }}/data:/data"
+    environment:
+      TZ: "{{ timezone }}"
+      DOMAIN: "https://{{ vaultwarden_domain }}"
+      SIGNUPS_ALLOWED: "{{ vaultwarden_signups_allowed | string | lower }}"
+      ADMIN_TOKEN: "{{ vaultwarden_admin_token }}"
+      # Trust the nginx reverse proxy on the docker bridge
+      IP_HEADER: "X-Real-IP"
+      ROCKET_PORT: "80"
+      ROCKET_ADDRESS: "0.0.0.0"
