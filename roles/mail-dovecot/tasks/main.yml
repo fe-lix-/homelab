@@ -1,0 +1,63 @@
+---
+- name: Look up vmail user
+  ansible.builtin.getent:
+    database: passwd
+    key: vmail
+    fail_key: false
+
+- name: Create vmail user if missing
+  ansible.builtin.user:
+    name: vmail
+    state: present
+  when: getent_passwd.vmail is none
+
+- name: Deploy dovecot.conf
+  ansible.builtin.template:
+    src: dovecot.conf.j2
+    dest: /etc/dovecot/dovecot.conf
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  notify: Restart dovecot
+
+- name: Ensure /var/lib/dovecot/sieve exists
+  ansible.builtin.file:
+    path: /var/lib/dovecot/sieve
+    state: directory
+    mode: "0755"
+    owner: vmail
+    group: vmail
+
+- name: Deploy default.sieve
+  ansible.builtin.copy:
+    src: default.sieve
+    dest: /var/lib/dovecot/sieve/default.sieve
+    mode: "0644"
+    owner: vmail
+    group: vmail
+  register: sieve_deploy
+  notify: Restart dovecot
+
+- name: Compile default.sieve
+  ansible.builtin.command:
+    cmd: sievec /var/lib/dovecot/sieve/default.sieve
+  args:
+    creates: /var/lib/dovecot/sieve/default.svbin
+  when: sieve_deploy.changed  # noqa no-handler
+
+- name: Deploy PAM dovecot config
+  ansible.builtin.copy:
+    src: dovecot.pam
+    dest: /etc/pam.d/dovecot
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  notify: Restart dovecot
+
+- name: Ensure dovecot is enabled and running
+  ansible.builtin.systemd:
+    name: dovecot
+    enabled: true
+    state: started

@@ -1,0 +1,8 @@
+---
+# Dead nginx vhosts left over from old experiments. Remove their nginx site
+# files, /var/www directories, /etc/hosts entries, and LE certs.
+mail_vhost_cleanup_dead_vhosts:
+  - fastly.delval.eu
+  - felix.delval.eu
+  - nina.quodt.eu
+  - test.delval.eu

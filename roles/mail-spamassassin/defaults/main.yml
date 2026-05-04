@@ -1,0 +1,6 @@
+---
+# emailwiz installs spamassassin and references it in master.cf as a content
+# filter, but never enables the spamd daemon. With this set to true, every
+# inbound message will be scored and tagged with X-Spam-Flag — Dovecot's
+# default sieve then files anything tagged into Junk.
+mail_spamassassin_enabled: true

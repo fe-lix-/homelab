@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-role collections vault-edit vault-create check diff lint logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router generate-password
+.PHONY: deploy deploy-role deploy-mail check-mail collections vault-edit vault-create check diff lint logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router generate-password
 
 -include .env
 export
@@ -97,3 +97,11 @@ generate-password:
 # Dump UniFi router config to /tmp/router-dump/
 dump-router:
 	ansible-playbook dump-router.yml $(VAULT_ARG)
+
+# Deploy the mail VPS (Postfix + Dovecot + OpenDKIM + SpamAssassin + nginx + fail2ban)
+deploy-mail:
+	ansible-playbook site-mail.yml $(VAULT_ARG) --force-handlers; true
+
+# Dry-run the mail VPS playbook with diff
+check-mail:
+	ansible-playbook site-mail.yml $(VAULT_ARG) --check --diff

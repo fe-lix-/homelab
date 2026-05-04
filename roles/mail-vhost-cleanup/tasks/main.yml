@@ -1,0 +1,52 @@
+---
+- name: Disable dead nginx sites
+  ansible.builtin.file:
+    path: "/etc/nginx/sites-enabled/{{ item }}"
+    state: absent
+  loop: "{{ mail_vhost_cleanup_dead_vhosts }}"
+  notify: Reload nginx
+
+- name: Remove dead nginx site definitions
+  ansible.builtin.file:
+    path: "/etc/nginx/sites-available/{{ item }}"
+    state: absent
+  loop: "{{ mail_vhost_cleanup_dead_vhosts }}"
+  notify: Reload nginx
+
+- name: Remove dead /var/www directories
+  ansible.builtin.file:
+    path: "/var/www/{{ item }}"
+    state: absent
+  loop:
+    - felix.delval.eu
+    - nina.quodt.eu
+    - test.delval.eu
+
+- name: Look up existing LE certs
+  ansible.builtin.find:
+    paths: /etc/letsencrypt/live
+    file_type: directory
+    recurse: false
+  register: le_live_dirs
+
+- name: Delete expired LE certs (via certbot delete)
+  ansible.builtin.command:
+    cmd: "certbot delete --cert-name {{ item }} --non-interactive"
+  loop: "{{ mail_vhost_cleanup_dead_vhosts }}"
+  when: >
+    le_live_dirs.files
+    | map(attribute='path')
+    | map('basename')
+    | list
+    | intersect([item])
+    | length > 0
+  changed_when: true
+
+- name: Remove stale /etc/hosts entries for dead vhosts
+  ansible.builtin.lineinfile:
+    path: /etc/hosts
+    state: absent
+    regexp: "^127\\.0\\.0\\.1\\s+{{ item | regex_escape }}\\s*$"
+  loop:
+    - test.delval.eu
+    - fastly.delval.eu

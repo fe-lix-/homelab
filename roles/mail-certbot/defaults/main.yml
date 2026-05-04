@@ -1,0 +1,2 @@
+---
+mail_certbot_credentials_file: /etc/letsencrypt/gandi.ini
