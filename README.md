@@ -35,6 +35,10 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Paul's Games | Static public-facing games site, content uploaded via the Samba `games` share (`@games-rw`) | `paul.delval.eu` (own LE cert, public-facing) |
 | Vaultwarden | Bitwarden-compatible password manager, public-facing (own LE cert). `/admin` panel restricted to LAN/VPN. | `vault.delval.eu` |
 
+## Other managed hosts
+
+The repo also manages a separate **mail server VPS** as a different host group / playbook (`mail` group, `site-mail.yml`). That host runs Postfix + Dovecot + OpenDKIM + SpamAssassin + nginx + fail2ban directly on the host (not in Docker), reverse-engineered from the [emailwiz](https://github.com/LukeSmithxyz/emailwiz) bash script. Roles: `mail-base`, `mail-postfix`, `mail-dovecot`, `mail-opendkim`, `mail-spamassassin`, `mail-certbot`, `mail-fail2ban`, `mail-vhost-cleanup`. Run `make deploy-mail` (full apply) or `make check-mail` (dry-run with diff).
+
 ## Architecture
 
 - All services run as Docker Compose stacks behind an nginx reverse proxy with HTTPS

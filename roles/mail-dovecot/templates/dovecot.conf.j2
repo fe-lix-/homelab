@@ -1,0 +1,82 @@
+# Dovecot config
+# Note that in the dovecot conf, you can use:
+# %u for username
+# %n for the name in name@domain.tld
+# %d for the domain
+# %h the user's home directory
+
+# If you're not a brainlet, SSL must be set to required.
+ssl = required
+ssl_cert = <{{ mail_dovecot_certdir }}/fullchain.pem
+ssl_key = <{{ mail_dovecot_certdir }}/privkey.pem
+ssl_min_protocol = TLSv1.2
+ssl_cipher_list = ALL:!RSA:!CAMELLIA:!aNULL:!eNULL:!LOW:!3DES:!MD5:!EXP:!PSK:!SRP:!DSS:!RC4:!SHA1:!SHA256:!SHA384:!LOW@STRENGTH
+ssl_prefer_server_ciphers = yes
+ssl_dh = </usr/share/dovecot/dh.pem
+# Plaintext login. This is safe and easy thanks to SSL.
+auth_mechanisms = plain login
+auth_username_format = %n
+
+protocols = $protocols imap
+
+# Search for valid users in /etc/passwd
+userdb {
+	driver = passwd
+}
+#Fallback: Use plain old PAM to find user passwords
+passdb {
+	driver = pam
+}
+
+# Our mail for each user will be in ~/Mail, and the inbox will be ~/Mail/Inbox
+# The LAYOUT option is also important because otherwise, the boxes will be `.Sent` instead of `Sent`.
+mail_location = maildir:~/Mail:INBOX=~/Mail/Inbox:LAYOUT=fs
+namespace inbox {
+	inbox = yes
+	mailbox Drafts {
+	special_use = \Drafts
+	auto = subscribe
+}
+	mailbox Junk {
+	special_use = \Junk
+	auto = subscribe
+	autoexpunge = 30d
+}
+	mailbox Sent {
+	special_use = \Sent
+	auto = subscribe
+}
+	mailbox Trash {
+	special_use = \Trash
+}
+	mailbox Archive {
+	special_use = \Archive
+}
+}
+
+# Here we let Postfix use Dovecot's authetication system.
+
+service auth {
+  unix_listener /var/spool/postfix/private/auth {
+	mode = 0660
+	user = postfix
+	group = postfix
+}
+}
+
+protocol lda {
+  mail_plugins = $mail_plugins sieve
+}
+
+protocol lmtp {
+  mail_plugins = $mail_plugins sieve
+}
+
+plugin {
+	sieve = ~/.dovecot.sieve
+	sieve_default = /var/lib/dovecot/sieve/default.sieve
+	#sieve_global_path = /var/lib/dovecot/sieve/default.sieve
+	sieve_dir = ~/.sieve
+	sieve_global_dir = /var/lib/dovecot/sieve/
+}
+

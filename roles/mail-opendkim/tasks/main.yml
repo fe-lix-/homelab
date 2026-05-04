@@ -1,0 +1,81 @@
+---
+- name: Ensure /etc/postfix/dkim directory exists
+  ansible.builtin.file:
+    path: /etc/postfix/dkim
+    state: directory
+    mode: "0755"
+    owner: root
+    group: root
+
+- name: Check whether DKIM key already exists
+  ansible.builtin.stat:
+    path: "/etc/postfix/dkim/{{ mail_subdomain }}.private"
+  register: dkim_key
+
+- name: Generate DKIM key (only if missing — never regenerate)
+  ansible.builtin.command:
+    cmd: "opendkim-genkey -D /etc/postfix/dkim/ -d {{ mail_domain }} -s {{ mail_subdomain }}"
+  when: not dkim_key.stat.exists
+  notify: Restart opendkim
+
+- name: Set group on DKIM key files
+  ansible.builtin.file:
+    path: "{{ item }}"
+    group: opendkim
+    mode: "0640"
+  loop:
+    - "/etc/postfix/dkim/{{ mail_subdomain }}.private"
+    - "/etc/postfix/dkim/{{ mail_subdomain }}.txt"
+
+- name: Deploy DKIM keytable
+  ansible.builtin.template:
+    src: keytable.j2
+    dest: /etc/postfix/dkim/keytable
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart opendkim
+
+- name: Deploy DKIM signingtable
+  ansible.builtin.template:
+    src: signingtable.j2
+    dest: /etc/postfix/dkim/signingtable
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart opendkim
+
+- name: Deploy DKIM trustedhosts
+  ansible.builtin.copy:
+    src: trustedhosts
+    dest: /etc/postfix/dkim/trustedhosts
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart opendkim
+
+- name: Deploy /etc/opendkim.conf
+  ansible.builtin.copy:
+    src: opendkim.conf
+    dest: /etc/opendkim.conf
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  notify: Restart opendkim
+
+- name: Deploy /etc/default/opendkim
+  ansible.builtin.copy:
+    src: default
+    dest: /etc/default/opendkim
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  notify: Restart opendkim
+
+- name: Ensure opendkim is enabled and running
+  ansible.builtin.systemd:
+    name: opendkim
+    enabled: true
+    state: started

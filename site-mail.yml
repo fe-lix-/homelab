@@ -1,0 +1,22 @@
+---
+- name: Configure mail server (Postfix + Dovecot + OpenDKIM)
+  hosts: mail
+  become: true
+
+  roles:
+    - role: mail-base
+      tags: mail-base
+    - role: mail-vhost-cleanup
+      tags: mail-vhost-cleanup
+    - role: mail-certbot
+      tags: mail-certbot
+    - role: mail-postfix
+      tags: mail-postfix
+    - role: mail-dovecot
+      tags: mail-dovecot
+    - role: mail-opendkim
+      tags: mail-opendkim
+    - role: mail-spamassassin
+      tags: mail-spamassassin
+    - role: mail-fail2ban
+      tags: mail-fail2ban

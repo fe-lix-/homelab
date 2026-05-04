@@ -1,0 +1,26 @@
+---
+- name: Deploy postfix main.cf
+  ansible.builtin.template:
+    src: main.cf.j2
+    dest: /etc/postfix/main.cf
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  notify: Restart postfix
+
+- name: Deploy postfix master.cf
+  ansible.builtin.template:
+    src: master.cf.j2
+    dest: /etc/postfix/master.cf
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  notify: Restart postfix
+
+- name: Ensure postfix is enabled and running
+  ansible.builtin.systemd:
+    name: postfix
+    enabled: true
+    state: started

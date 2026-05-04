@@ -1,0 +1,12 @@
+---
+mail_domain: delval.eu
+mail_subdomain: mail
+mail_hostname: "{{ mail_subdomain }}.{{ mail_domain }}"
+mail_packages:
+  - postfix
+  - dovecot-imapd
+  - dovecot-sieve
+  - opendkim
+  - opendkim-tools
+  - spamassassin
+  - spamc

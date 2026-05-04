@@ -1,0 +1,15 @@
+---
+- name: Install mail server packages
+  ansible.builtin.apt:
+    name: "{{ mail_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Set /etc/mailname to the bare domain
+  ansible.builtin.copy:
+    content: "{{ mail_domain }}\n"
+    dest: /etc/mailname
+    mode: "0644"
+    owner: root
+    group: root

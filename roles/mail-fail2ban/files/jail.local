@@ -1,0 +1,18 @@
+[DEFAULT]
+bantime  = 1h
+findtime = 10m
+maxretry = 5
+backend  = systemd
+
+[sshd]
+enabled = true
+
+[postfix]
+enabled = true
+mode    = aggressive
+
+[postfix-sasl]
+enabled = true
+
+[dovecot]
+enabled = true

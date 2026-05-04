@@ -1,0 +1,2 @@
+---
+mail_dovecot_certdir: "/etc/letsencrypt/live/{{ mail_hostname }}"

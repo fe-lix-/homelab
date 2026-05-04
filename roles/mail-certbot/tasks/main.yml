@@ -1,0 +1,47 @@
+---
+# certbot is already apt-installed with python3-certbot-nginx plugin (from
+# the original emailwiz era). The cert quietly expired because cron-based
+# renewal is a no-op under systemd and certbot.timer was never enabled.
+# We use the existing nginx authenticator (HTTP-01 via the "mail" vhost on
+# port 80) and enable certbot.timer so renewals actually fire.
+
+- name: Ensure deploy-hooks directory exists
+  ansible.builtin.file:
+    path: /etc/letsencrypt/renewal-hooks/deploy
+    state: directory
+    mode: "0755"
+
+- name: Deploy mail reload hook
+  ansible.builtin.template:
+    src: reload-mail.sh.j2
+    dest: /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh
+    mode: "0755"
+
+- name: Renew mail cert via nginx HTTP-01 (no-op if not yet near expiry)
+  ansible.builtin.command:
+    cmd: >
+      certbot certonly
+      --authenticator nginx
+      --installer nginx
+      --cert-name {{ mail_hostname }}
+      -d {{ mail_hostname }}
+      --agree-tos
+      --email {{ certbot_email }}
+      --non-interactive
+      --keep-until-expiring
+      --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh
+  register: certbot_run
+  changed_when: "'no action taken' not in certbot_run.stdout"
+  notify:
+    - Restart postfix
+    - Restart dovecot
+
+# /etc/cron.d/certbot is gated by `! -d /run/systemd/system` so it's a no-op
+# on systemd boxes — the actual renewal driver is certbot.timer, which the
+# apt package ships disabled by default. This is the root cause of the
+# 6-week-expired cert.
+- name: Enable and start certbot.timer
+  ansible.builtin.systemd:
+    name: certbot.timer
+    enabled: true
+    state: started

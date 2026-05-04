@@ -1,0 +1,6 @@
+---
+- name: Manage spamassassin daemon
+  ansible.builtin.systemd:
+    name: spamassassin
+    enabled: "{{ mail_spamassassin_enabled }}"
+    state: "{{ 'started' if mail_spamassassin_enabled else 'stopped' }}"
