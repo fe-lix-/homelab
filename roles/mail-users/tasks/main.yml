@@ -1,0 +1,34 @@
+---
+# Manage mailbox users on the mail VPS. Source of truth is `mail_users`
+# (vault). Inbox creation is handled lazily by Dovecot's deliver-LDA on
+# first message — no need to pre-create Maildir layout here.
+
+- name: Ensure mail group exists
+  ansible.builtin.group:
+    name: mail
+    state: present
+
+- name: Create / update mailbox users
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    comment: "{{ item.full_name | default('') }}"
+    shell: "{{ item.shell | default('/bin/sh') }}"
+    password: "{{ item.password_hash }}"
+    groups: "{{ (mail_users_default_groups + (item.groups | default([]))) | unique }}"
+    append: false
+    create_home: true
+    state: present
+    update_password: always
+  loop: "{{ mail_users | rejectattr('state', 'defined') | list + (mail_users | selectattr('state', 'defined') | selectattr('state', 'eq', 'present') | list) }}"
+  loop_control:
+    label: "{{ item.name }}"
+  no_log: true   # password_hash should never appear in logs
+
+- name: Remove deleted mailbox users (without wiping their mail)
+  ansible.builtin.user:
+    name: "{{ item.name }}"
+    state: absent
+    remove: false   # keep /home/<user>/Mail/ intact — manual archival decision
+  loop: "{{ mail_users | selectattr('state', 'defined') | selectattr('state', 'eq', 'absent') | list }}"
+  loop_control:
+    label: "{{ item.name }}"

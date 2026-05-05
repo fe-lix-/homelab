@@ -1,1 +1,4 @@
 *@{{ mail_domain }} {{ mail_subdomain }}._domainkey.{{ mail_domain }}
+{% for d in mail_extra_domains %}
+*@{{ d }} {{ mail_subdomain }}._domainkey.{{ d }}
+{% endfor %}

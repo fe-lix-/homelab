@@ -1,1 +1,4 @@
 {{ mail_subdomain }}._domainkey.{{ mail_domain }} {{ mail_domain }}:{{ mail_subdomain }}:/etc/postfix/dkim/{{ mail_subdomain }}.private
+{% for d in mail_extra_domains %}
+{{ mail_subdomain }}._domainkey.{{ d }} {{ d }}:{{ mail_subdomain }}:/etc/postfix/dkim/{{ d }}/{{ mail_subdomain }}.private
+{% endfor %}

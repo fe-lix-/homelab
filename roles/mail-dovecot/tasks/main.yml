@@ -9,7 +9,7 @@
   ansible.builtin.user:
     name: vmail
     state: present
-  when: getent_passwd.vmail is none
+  when: ansible_facts.getent_passwd.vmail is none
 
 - name: Deploy dovecot.conf
   ansible.builtin.template:

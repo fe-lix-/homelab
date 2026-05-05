@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-role deploy-mail check-mail collections vault-edit vault-create check diff lint logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router generate-password
+.PHONY: deploy deploy-role deploy-mail check-mail mail-hash-password mail-extract-users collections vault-edit vault-create check diff lint logs-backup logs-immich versions versions-update check-mediathekarr-geo authelia-hash-password check-ownership provision-monitors manga-scheduler-next mc-stop mc-start dump-router generate-password
 
 -include .env
 export
@@ -105,3 +105,13 @@ deploy-mail:
 # Dry-run the mail VPS playbook with diff
 check-mail:
 	ansible-playbook site-mail.yml $(VAULT_ARG) --check --diff
+
+# Generate a SHA-512 crypt hash for a new mailbox password (interactive prompt)
+mail-hash-password:
+	@openssl passwd -6
+
+# Extract existing mailbox users + password hashes from the mail VPS into
+# /tmp/mail_users_extract.yml on this machine, ready to paste into vault.yml.
+# Hashes never transit through stdout — script writes directly to the file.
+mail-extract-users:
+	@scripts/extract-mail-users.sh
