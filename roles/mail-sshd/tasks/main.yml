@@ -1,0 +1,18 @@
+---
+# Mail VPS SSH hardening. emailwiz left sshd at distro defaults
+# (PermitRootLogin yes, PasswordAuthentication yes, X11Forwarding yes).
+# Public-internet exposed → brute-forced constantly. Ansible already
+# connects via key, so passwords can be turned off without locking
+# ourselves out. `validate: sshd -t -f %s` blocks save on bad syntax.
+
+- name: Harden SSH configuration
+  ansible.builtin.lineinfile:
+    path: /etc/ssh/sshd_config
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+    validate: "sshd -t -f %s"
+  loop:
+    - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin {{ mail_ssh_permit_root_login }}' }
+    - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication {{ mail_ssh_password_authentication }}' }
+    - { regexp: '^#?X11Forwarding', line: 'X11Forwarding {{ mail_ssh_x11_forwarding }}' }
+  notify: Restart sshd

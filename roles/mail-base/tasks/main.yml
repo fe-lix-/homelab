@@ -13,3 +13,20 @@
     mode: "0644"
     owner: root
     group: root
+
+- name: Deploy Mithlond landing page
+  ansible.builtin.copy:
+    src: "{{ role_path }}/templates/index.html"
+    dest: /var/www/mail/index.html
+    mode: "0644"
+    owner: www-data
+    group: www-data
+
+# jammy default omits ${distro_codename}-updates; security packages with
+# non-security deps then fail with "no packages can be upgraded" and pile up.
+- name: Add -updates pocket to unattended-upgrades allowed origins
+  ansible.builtin.lineinfile:
+    path: /etc/apt/apt.conf.d/50unattended-upgrades
+    insertafter: '\$\{distro_id\}:\$\{distro_codename\}-security";'
+    regexp: '\$\{distro_codename\}-updates";'
+    line: "\t\"${distro_id}:${distro_codename}-updates\";"

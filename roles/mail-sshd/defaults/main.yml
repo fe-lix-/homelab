@@ -1,0 +1,4 @@
+---
+mail_ssh_permit_root_login: "prohibit-password"
+mail_ssh_password_authentication: "no"
+mail_ssh_x11_forwarding: "no"

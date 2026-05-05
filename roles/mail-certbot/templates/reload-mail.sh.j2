@@ -1,3 +1,4 @@
 #!/bin/bash
 systemctl reload postfix 2>/dev/null || systemctl restart postfix
 systemctl restart dovecot
+systemctl reload nginx 2>/dev/null || systemctl restart nginx

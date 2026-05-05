@@ -6,6 +6,8 @@
   roles:
     - role: mail-base
       tags: mail-base
+    - role: mail-sshd
+      tags: mail-sshd
     - role: mail-vhost-cleanup
       tags: mail-vhost-cleanup
     - role: mail-certbot
