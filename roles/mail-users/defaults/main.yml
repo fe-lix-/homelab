@@ -1,0 +1,18 @@
+---
+# List of mailbox users on the mail VPS. Defined in the encrypted vault as
+# `mail_users` (since password_hash is sensitive). Each entry:
+#
+#   - name: nina
+#     full_name: "Nina Q"            # optional GECOS field
+#     shell: /bin/sh                  # /bin/sh for mailbox-only, /bin/bash for admins
+#     password_hash: "$6$..."         # crypt-style hash (SHA-512 / yescrypt / `!` to lock)
+#     groups: [mail]                  # extra groups
+#     state: present                  # present/absent (default present)
+#
+# Generate a SHA-512 hash with `make mail-hash-password`.
+mail_users: []
+
+# Default groups every mailbox user gets. The `mail` group is the convention
+# inherited from the emailwiz-era setup.
+mail_users_default_groups:
+  - mail

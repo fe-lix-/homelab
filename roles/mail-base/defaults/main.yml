@@ -2,6 +2,12 @@
 mail_domain: delval.eu
 mail_subdomain: mail
 mail_hostname: "{{ mail_subdomain }}.{{ mail_domain }}"
+
+# Additional virtual domains delivered to local POSIX mailboxes.
+# `<user>@<extra-domain>` lands in /home/<user>/Mail/Inbox alongside
+# `<user>@{{ mail_domain }}`. Each extra domain gets its own DKIM key
+# under /etc/postfix/dkim/<domain>/{{ mail_subdomain }}.private.
+mail_extra_domains: []
 mail_packages:
   - postfix
   - dovecot-imapd

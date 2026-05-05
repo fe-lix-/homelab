@@ -8,6 +8,8 @@
       tags: mail-base
     - role: mail-sshd
       tags: mail-sshd
+    - role: mail-users
+      tags: mail-users
     - role: mail-vhost-cleanup
       tags: mail-vhost-cleanup
     - role: mail-certbot
