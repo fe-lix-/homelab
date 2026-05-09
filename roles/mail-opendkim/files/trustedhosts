@@ -1,3 +1,5 @@
+# OpenDKIM InternalHosts: hosts whose outbound mail mithlond's Postfix
+# re-injects from will be DKIM-signed (rather than verified). On this VPS
+# only local Postfix submits mail, so loopback is the entire trust set.
 127.0.0.1
-10.1.0.0/16
-1.2.3.4/24
+::1

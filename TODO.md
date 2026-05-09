@@ -1,6 +1,6 @@
 # Homelab TODO
 
-Combined findings from the March 2026 security audits and Ansible reviews.
+Combined findings from the March 2026 and May 2026 security audits and Ansible reviews. The May 2026 pass added the mail VPS (mithlond) to scope and revisited SSH key handling on both hosts.
 
 ## Bugs
 
@@ -37,6 +37,16 @@ Combined findings from the March 2026 security audits and Ansible reviews.
 - [x] **Add explicit nginx volume mounts for `mc-forbidden.html` and `favicon.svg`** — `roles/nginx/templates/docker-compose.yml.j2`: These static files are referenced in `default.conf.j2` but have no volume mounts. They work today only because nginx uses host networking (container inherits host filesystem). Add explicit `ro` mounts so the config doesn't silently break if networking mode ever changes.
 
 - [x] **Clear `Remote-User` header before Authelia sets it in Paperless vhost** — `roles/nginx/templates/default.conf.j2`: Paperless trusts the `Remote-User` header for authentication (`PAPERLESS_ENABLE_HTTP_REMOTE_USER: true`). nginx doesn't strip client-supplied headers by default. Add `proxy_set_header Remote-User "";` in the proxy location block before `authelia_auth()` sets it from the validated Authelia response, so a client cannot self-authenticate by injecting the header.
+
+- [ ] **Stale `1.2.3.4/24` placeholder in OpenDKIM trustedhosts** — `roles/mail-opendkim/files/trustedhosts:3`: emailwiz's textbook placeholder was committed verbatim. Not currently exploitable (the block isn't in postfix `mynetworks` so it can't relay), but the file's purpose is to enumerate hosts whose mail OpenDKIM signs — leaving an arbitrary public /24 on the trust list is a misconfig waiting to be paired with a `mynetworks` mistake. Delete the line; keep `127.0.0.1` and the legitimate homelab range only.
+
+- [ ] **Vaultwarden compose template renders `ADMIN_TOKEN` without `no_log`** — `roles/vaultwarden/tasks/main.yml:17-22`: the template task has `mode: "0640"` (good) but no `no_log: true`, so the rendered file content with `ADMIN_TOKEN: "{{ vaultwarden_admin_token }}"` lands in Ansible logs / playbook stdout / CI artifacts. Add `no_log: true`.
+
+- [ ] **Joynarr compose template renders `REMOTE_CDM_SECRET` without `no_log` and at world-readable mode** — `roles/joynarr/tasks/main.yml:71-76`: template embeds `joynarr_pywidevine_secret`. Tighten to `mode: "0640"` and add `no_log: true` (matching the authelia / monitoring / vaultwarden pattern after the fix above).
+
+- [ ] **Mail VPS has no Ansible-managed `authorized_keys`** — `site-mail.yml`, `roles/mail-base/tasks/main.yml`, `roles/mail-sshd/tasks/main.yml`: the homelab `base` role drives `ssh_authorized_keys` (from vault) into managed users; the mail playbook never deploys an `authorized_keys` file anywhere. Root SSH access depends on whatever key was placed during VPS provisioning — unmanaged, unrotatable, and silently divergent from `vault_ssh_authorized_keys`. If the local key file is lost the only recovery is the Vultr web console. Either add a `mail-users`-side `ansible.posix.authorized_key` task that points at a `mail_authorized_keys` vault var, or document this explicitly as accepted risk and store the recovery key off-machine.
+
+- [ ] **DKIM private key has no off-VPS backup** — `roles/backup/` only runs on kazad-dum; mithlond has no managed backup mechanism. CLAUDE.md is explicit that `/etc/postfix/dkim/{delval.eu,quodt.eu}/mail.private` MUST NEVER be regenerated, but the corollary — that losing the VPS means losing every key forever — has no mitigation. Add a periodic encrypted pull (e.g. restic from kazad-dum to the VPS over SSH for the dkim dir, or a nightly `scp` into the existing restic repo) or document the recovery plan.
 
 ## Security — Medium
 
@@ -76,6 +86,38 @@ Combined findings from the March 2026 security audits and Ansible reviews.
 
 - [ ] **Manga-scheduler UI writes unsanitized `Remote-Name`/`Remote-User` headers to disk** — `roles/manga-scheduler/templates/manga-scheduler-ui.py.j2:764,798`: Nginx sets the header from Authelia and the UI binds 127.0.0.1, so not currently exploitable, but no length/charset check defends against future nginx changes or header smuggling. Regex-validate (`[A-Za-z0-9._@-]{1,64}`) before `.write_text()`.
 
+- [ ] **`authorized_key` task uses `state: present` without `exclusive: true`** — `roles/base/tasks/main.yml:34-41`: removing a key from `vault_ssh_authorized_keys` will not remove it from the host. Key rotation is one-way; revocation requires manual `ssh` + `sed` on every host the key was added to. Switch to a single `authorized_key` task per user with `key: "{{ keys | join('\n') }}"` and `exclusive: true`, or add a separate cleanup task that diff's `~/.ssh/authorized_keys` against the vault.
+
+- [ ] **SSH crypto / login limits not hardened on either host** — `roles/security/tasks/main.yml:34-44` and `roles/mail-sshd/tasks/main.yml:8-18`: hardening covers only `PermitRootLogin`, `PasswordAuthentication`, `X11Forwarding`. Server defaults still apply for `MaxAuthTries` (6), `LoginGraceTime` (120s), `MaxSessions` (10), and the full distro set of `KexAlgorithms`/`Ciphers`/`MACs` (which still includes `hmac-sha1` and `aes-cbc` on jammy). Mail VPS is publicly reachable on port 22 — tighten there first. Add to the `lineinfile` loop:
+  - `MaxAuthTries 3`, `LoginGraceTime 30`, `MaxSessions 4`
+  - `KexAlgorithms sntrup761x25519-sha512@openssh.com,curve25519-sha256,curve25519-sha256@libssh.org`
+  - `Ciphers chacha20-poly1305@openssh.com,aes256-gcm@openssh.com,aes128-gcm@openssh.com`
+  - `MACs hmac-sha2-512-etm@openssh.com,hmac-sha2-256-etm@openssh.com,umac-128-etm@openssh.com`
+  - `AllowUsers felix` (homelab) / `AllowUsers root` (mail VPS) — defense-in-depth against future user creation accidentally exposing SSH.
+
+- [ ] **Mail-roundcube template task missing `no_log: true`** — `roles/mail-roundcube/tasks/main.yml:33-41`: renders `/etc/roundcube/config.inc.php` containing `mail_roundcube_des_key` (Roundcube's cookie/session encryption secret — knowing it lets an attacker forge session cookies). File mode is `0640 root:www-data` (correct), but the task itself has no `no_log`. Add it.
+
+- [ ] **Postfix port-25 SASL not explicitly disabled** — `roles/mail-postfix/templates/master.cf.j2:123-124`: `smtpd_sasl_auth_enable = yes` is set globally in `main.cf` and inherited by the inbound `smtp inet` service. Today this is mitigated by `smtpd_tls_auth_only = yes` (auth only over TLS), but the protection is implicit — a future flip of that flag silently exposes plaintext SASL on port 25. Make it explicit: append `-o smtpd_sasl_auth_enable=no` to the `smtp inet` line in master.cf so submission/465 are the only auth-enabled services.
+
+- [ ] **Postfix missing `disable_vrfy_command`, `smtpd_helo_required`, explicit recipient restrictions** — `roles/mail-postfix/templates/main.cf.j2`: VRFY enables system-user enumeration (Dovecot uses PAM against `/etc/passwd`, so VRFY effectively confirms shell-account existence — relevant since the VPS is publicly reachable and root is the SSH login). Add to main.cf:
+  ```
+  disable_vrfy_command = yes
+  smtpd_helo_required = yes
+  smtpd_sender_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_non_fqdn_sender, reject_unknown_sender_domain
+  smtpd_recipient_restrictions = permit_mynetworks, permit_sasl_authenticated, reject_non_fqdn_recipient, reject_unknown_recipient_domain, reject_unauth_destination
+  ```
+
+- [ ] **Postfix has no client connection / message rate limits** — `roles/mail-postfix/templates/main.cf.j2`: `smtpd_client_connection_rate_limit` and `smtpd_client_message_rate_limit` are unset (default = unlimited). A compromised mailbox or a noisy public IP can flood the server before fail2ban's window kicks in. Add to main.cf:
+  ```
+  smtpd_client_connection_rate_limit = 30
+  smtpd_client_message_rate_limit = 100
+  anvil_rate_time_unit = 60s
+  ```
+
+- [ ] **No nginx slowloris protections on the public-facing reverse proxy** — `roles/nginx/templates/default.conf.j2` (no top-level `nginx.conf.j2` is deployed; the container runs with default `http {}` settings). `client_body_timeout`, `client_header_timeout`, `keepalive_timeout`, `send_timeout` are all at the upstream defaults (60s/65s) — long enough to be useful in a slow-loris flood. The public domains (`lab.delval.eu`, `paul.delval.eu`, `home.delval.eu`, `vault.delval.eu`, `atomic313.cloud`) terminate here. Either deploy a managed `nginx.conf.j2` or include an `http {}` snippet via `volumes:` mount with `client_body_timeout 10s; client_header_timeout 10s; keepalive_timeout 15s; send_timeout 10s;`.
+
+- [ ] **Docker daemon missing `no-new-privileges` default** — `roles/docker/templates/daemon.json.j2`: the existing per-container `security_opt: [no-new-privileges:true]` is only applied to a handful of services (webhook-receiver, etc.). Setting `"no-new-privileges": true` at the daemon level provides a backstop for everything else. (Skip `userns-remap` — known to break linuxserver.io PUID/PGID volume ownership the homelab depends on.)
+
 ## Security — Low
 
 - [ ] **Remove stale Jellyfin redirect URI** — `roles/authelia/templates/configuration.yml.j2`: `/sso/OID/redirect/authelia` is registered as a redirect_uri but per CLAUDE.md the plugin always sends `/sso/OID/r/authelia`. Remove the stale entry (OIDC best practice: minimal redirect_uri set).
@@ -97,6 +139,12 @@ Combined findings from the March 2026 security audits and Ansible reviews.
 - [ ] **Clean up or integrate orphaned sabnzbd role** — `roles/sabnzbd/` exists but is not in `site.yml`. Either add it with nginx vhost and Authelia coverage, or delete the role directory.
 
 - [ ] **Deploy explicit unattended-upgrades config** — `roles/base/tasks/main.yml`: Package is installed but no managed config template is deployed. Add a `50unattended-upgrades` template to make upgrade behavior idempotent and auditable.
+
+- [ ] **Mail VPS `mail-fail2ban` has no `nginx-http-auth` jail** — `roles/mail-fail2ban/files/jail.local`: jails cover sshd, postfix, postfix-sasl, dovecot. Roundcube webmail brute-force eventually surfaces in the dovecot jail (since IMAP auth fails too) and is upstream-gated by Authelia, so this is mostly defense-in-depth. Add `[nginx-http-auth]` and a `[recidive]` jail to catch repeat offenders across services.
+
+- [ ] **`admin_user: ansible` defined but unused** — `inventories/production/group_vars/all/main.yml:46`: no role creates this user; SSH access is via `felix` (homelab) / `root` (mail). Dead config invites confusion during an incident. Either wire it up (create the user, make it the Ansible connection user) or delete the line.
+
+- [ ] **SpamAssassin runs with no tuned `local.cf`** — `roles/mail-spamassassin/`: the role enables/starts `spamd` but ships no `/etc/spamassassin/local.cf` template. Default rules ship with `required_score 5.0` and a fairly conservative ruleset; on a low-volume personal mail server you typically want some local tuning (RBL timeouts, score adjustments, per-domain allowlists) — and managing them in Ansible beats editing `local.cf` on the VPS by hand.
 
 ## Low Priority
 
