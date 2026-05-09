@@ -1,0 +1,34 @@
+---
+mail_roundcube_packages:
+  - roundcube-core
+  - roundcube-sqlite3
+  - roundcube-plugins
+  - php-fpm
+  - php-imap
+  - php-mbstring
+  - php-intl
+  - php-xml
+  - php-net-smtp
+
+# Connection target (local Dovecot/Postfix on mithlond).
+# Use the public hostname (not 127.0.0.1) so SNI matches the LE cert that
+# Dovecot/Postfix present — without SNI Dovecot drops the TLS handshake.
+# Traffic still stays on the box (kernel routes mail.delval.eu's IP locally).
+mail_roundcube_imap_host: "ssl://{{ mail_hostname }}"
+mail_roundcube_imap_port: 993
+mail_roundcube_smtp_host: "tls://{{ mail_hostname }}"
+mail_roundcube_smtp_port: 587
+
+# Public-facing path (must match the nginx location in mail-nginx)
+mail_roundcube_request_path: "/guest"
+
+# Document root after apt install (Ubuntu jammy)
+mail_roundcube_doc_root: "/var/lib/roundcube/public_html"
+
+# PHP-FPM (Ubuntu jammy ships php-fpm 8.1)
+mail_roundcube_php_fpm_service: "php8.1-fpm"
+mail_roundcube_php_fpm_sock: "/run/php/php8.1-fpm.sock"
+
+# REQUIRED in vault: 24-char hex string for Roundcube cookie/session encryption.
+# Generate with: python3 -c "import secrets; print(secrets.token_hex(12))"
+mail_roundcube_des_key: ""

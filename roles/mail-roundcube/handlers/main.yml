@@ -1,0 +1,6 @@
+---
+- name: Restart php-fpm
+  ansible.builtin.systemd:
+    name: "{{ mail_roundcube_php_fpm_service }}"
+    state: restarted
+  when: not ansible_check_mode

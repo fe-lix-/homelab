@@ -1,2 +1,7 @@
 ---
 mail_postfix_certdir: "/etc/letsencrypt/live/{{ mail_hostname }}"
+
+# Virtual aliases. Each entry: {address: foo@delval.eu, destinations: [user1, user2, ext@x.com]}
+# Mail to <address> is delivered to each destination (local username or external email).
+# Listing the local user as destination keeps a local copy; without it the mail is forwarded only.
+mail_aliases: []

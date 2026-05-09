@@ -1,0 +1,70 @@
+# Managed by Ansible — do not edit by hand.
+
+server {
+    listen 80;
+    server_name {{ mail_hostname }};
+    if ($host = {{ mail_hostname }}) {
+        return 301 https://$host$request_uri;
+    }
+    return 404;
+}
+
+server {
+    # nginx on jammy is 1.18; HTTP/2 enabled via listen flag rather than http2 directive
+    listen 443 ssl http2;
+    server_name {{ mail_hostname }};
+
+    ssl_certificate /etc/letsencrypt/live/{{ mail_hostname }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ mail_hostname }}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+    root /var/www/mail;
+    index index.html;
+
+    # Forward-auth endpoint — proxies to remote Authelia on kazad-dum.
+    # Internal-only; called via auth_request from gated locations below.
+    location = /internal/authelia/authz {
+        internal;
+        proxy_pass https://{{ mail_nginx_authelia_host }}/api/authz/auth-request;
+        proxy_set_header Host {{ mail_nginx_authelia_host }};
+        proxy_set_header X-Original-Method $request_method;
+        proxy_set_header X-Original-URL $scheme://$http_host$request_uri;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header Content-Length "";
+        proxy_set_header Connection "";
+        proxy_pass_request_body off;
+    }
+
+    # /guest without trailing slash → redirect to /guest/ (otherwise it falls
+    # through to the static `location /` block and 404s).
+    location = /guest {
+        return 301 /guest/;
+    }
+
+    # Roundcube webmail (guest mailbox viewer) — gated by Authelia.
+    # ^~ prefix-matches with priority over regex locations so `\.php$` regex
+    # outside this block can't poach Roundcube's PHP requests.
+    location ^~ /guest/ {
+        auth_request /internal/authelia/authz;
+        auth_request_set $redirection_url $upstream_http_location;
+        error_page 401 =302 $redirection_url;
+
+        alias {{ mail_roundcube_doc_root }}/;
+        index index.php;
+
+        location ~ \.php$ {
+            include snippets/fastcgi-php.conf;
+            fastcgi_pass unix:{{ mail_roundcube_php_fpm_sock }};
+            fastcgi_param SCRIPT_FILENAME $request_filename;
+            fastcgi_param HTTPS on;
+        }
+    }
+
+    # Mithlond landing page (anything else hits the static index.html)
+    location / {
+        try_files $uri $uri/ =404;
+    }
+}

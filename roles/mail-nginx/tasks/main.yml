@@ -1,0 +1,17 @@
+---
+- name: Deploy mail nginx vhost
+  ansible.builtin.template:
+    src: mail.conf.j2
+    dest: "{{ mail_nginx_vhost_path }}"
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  notify: Reload nginx
+
+- name: Ensure mail vhost is enabled
+  ansible.builtin.file:
+    src: "{{ mail_nginx_vhost_path }}"
+    dest: /etc/nginx/sites-enabled/mail
+    state: link
+  notify: Reload nginx

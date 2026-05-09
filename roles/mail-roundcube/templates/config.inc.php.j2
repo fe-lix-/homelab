@@ -1,0 +1,29 @@
+<?php
+// Managed by Ansible — do not edit by hand.
+// debian-db-roundcube.php translates dbconfig-common's vars into $config['db_dsnw'].
+// (debian-db.php alone only declares the raw vars without setting db_dsnw.)
+include_once '/etc/roundcube/debian-db-roundcube.php';
+
+$config['default_host']   = '{{ mail_roundcube_imap_host }}';
+$config['default_port']   = {{ mail_roundcube_imap_port }};
+$config['smtp_server']    = '{{ mail_roundcube_smtp_host }}';
+$config['smtp_port']      = {{ mail_roundcube_smtp_port }};
+$config['smtp_user']      = '%u';
+$config['smtp_pass']      = '%p';
+
+// Auto-append the mail domain when users log in with just their POSIX username.
+$config['username_domain'] = '{{ mail_domain }}';
+
+// Cookie / session encryption key — must be 24 chars; regenerating it logs
+// every active session out, which is fine for this single-user webmail.
+$config['des_key']        = '{{ mail_roundcube_des_key }}';
+
+// Subpath deployment behind nginx — Roundcube generates URLs starting with this.
+$config['request_path']   = '{{ mail_roundcube_request_path }}';
+$config['use_https']      = true;
+$config['enable_installer'] = false;
+$config['support_url']    = '';
+$config['product_name']   = 'Mithlond Webmail';
+
+$config['skin']           = 'elastic';
+$config['plugins']        = [];
