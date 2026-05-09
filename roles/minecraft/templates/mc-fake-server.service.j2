@@ -12,6 +12,7 @@ StandardError=journal
 SyslogIdentifier=mc-fake-server
 User={{ minecraft_user }}
 Group=docker
+Environment=DOCKER_CONFIG={{ minecraft_data_dir }}/.docker
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

@@ -25,13 +25,14 @@
   loop:
     - "{{ minecraft_data_dir }}"
     - "{{ minecraft_data_dir }}/data"
+    - "{{ minecraft_data_dir }}/.docker"
 
 - name: Deploy minecraft docker-compose
   ansible.builtin.template:
     src: docker-compose.yml.j2
     dest: "{{ minecraft_data_dir }}/docker-compose.yml"
-    owner: root
-    group: root
+    owner: "{{ minecraft_user }}"
+    group: "{{ minecraft_user }}"
     mode: "0640"
   no_log: true
 
@@ -85,7 +86,9 @@
     owner: root
     group: root
     mode: "0644"
-  notify: Reload systemd
+  notify:
+    - Reload systemd
+    - Restart mc-fake-server
 
 - name: Deploy mc-idle-watcher systemd service
   ansible.builtin.template:

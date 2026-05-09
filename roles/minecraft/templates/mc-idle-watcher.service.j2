@@ -10,6 +10,7 @@ StandardError=journal
 SyslogIdentifier=mc-idle-watcher
 User={{ minecraft_user }}
 Group=docker
+Environment=DOCKER_CONFIG={{ minecraft_data_dir }}/.docker
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
