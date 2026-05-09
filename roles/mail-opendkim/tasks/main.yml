@@ -12,12 +12,32 @@
     path: "/etc/postfix/dkim/{{ mail_subdomain }}.private"
   register: dkim_key
 
+- name: Restore primary DKIM private key from vault if missing on disk
+  ansible.builtin.copy:
+    content: "{{ mail_dkim_private_keys[mail_domain] }}"
+    dest: "/etc/postfix/dkim/{{ mail_subdomain }}.private"
+    owner: root
+    group: opendkim
+    mode: "0640"
+    force: false
+  when:
+    - not dkim_key.stat.exists
+    - mail_domain in mail_dkim_private_keys
+    - mail_dkim_private_keys[mail_domain] | length > 0
+  no_log: true
+  notify: Restart opendkim
+
 - name: Generate DKIM key (only if missing — never regenerate)
   ansible.builtin.command:
     cmd: "opendkim-genkey -D /etc/postfix/dkim/ -d {{ mail_domain }} -s {{ mail_subdomain }}"
-  when: not dkim_key.stat.exists
+  when:
+    - not dkim_key.stat.exists
+    - mail_dkim_private_keys[mail_domain] | default('') | length == 0
   notify: Restart opendkim
 
+# .txt is the public DNS record; not loaded by opendkim and not present after a
+# vault-restore (vault stores .private only). failed_when: false lets the loop
+# skip the missing .txt without aborting the play.
 - name: Set group on DKIM key files
   ansible.builtin.file:
     path: "{{ item }}"
@@ -26,6 +46,7 @@
   loop:
     - "/etc/postfix/dkim/{{ mail_subdomain }}.private"
     - "/etc/postfix/dkim/{{ mail_subdomain }}.txt"
+  failed_when: false
 
 # Per-domain DKIM keys for additional virtual domains. Same never-regenerate
 # guard as the primary key — opendkim-genkey only runs if the .private file
@@ -45,10 +66,30 @@
   register: extra_dkim_keys
   loop: "{{ mail_extra_domains }}"
 
+- name: Restore extra-domain DKIM private keys from vault if missing on disk
+  ansible.builtin.copy:
+    content: "{{ mail_dkim_private_keys[item.item] }}"
+    dest: "/etc/postfix/dkim/{{ item.item }}/{{ mail_subdomain }}.private"
+    owner: root
+    group: opendkim
+    mode: "0640"
+    force: false
+  loop: "{{ extra_dkim_keys.results }}"
+  loop_control:
+    label: "{{ item.item }}"
+  when:
+    - not item.stat.exists
+    - item.item in mail_dkim_private_keys
+    - mail_dkim_private_keys[item.item] | length > 0
+  no_log: true
+  notify: Restart opendkim
+
 - name: Generate DKIM key for extra domains (only if missing)
   ansible.builtin.command:
     cmd: "opendkim-genkey -D /etc/postfix/dkim/{{ item.item }}/ -d {{ item.item }} -s {{ mail_subdomain }}"
-  when: not item.stat.exists
+  when:
+    - not item.stat.exists
+    - mail_dkim_private_keys[item.item] | default('') | length == 0
   loop: "{{ extra_dkim_keys.results }}"
   loop_control:
     label: "{{ item.item }}"
@@ -60,6 +101,7 @@
     group: opendkim
     mode: "0640"
   loop: "{{ mail_extra_domains | product(['private', 'txt']) | list }}"
+  failed_when: false
 
 - name: Deploy DKIM keytable
   ansible.builtin.template:
