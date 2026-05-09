@@ -1,0 +1,5 @@
+# Managed by Ansible — do not edit by hand.
+# Compile with `postmap /etc/postfix/virtual` after edits (Ansible does this automatically).
+{% for alias in mail_aliases %}
+{{ alias.address }}	{{ alias.destinations | join(', ') }}
+{% endfor %}

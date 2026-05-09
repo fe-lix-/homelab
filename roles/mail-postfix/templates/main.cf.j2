@@ -37,6 +37,7 @@ smtpd_relay_restrictions = permit_mynetworks permit_sasl_authenticated defer_una
 myhostname = {{ mail_hostname }}
 alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
+virtual_alias_maps = hash:/etc/postfix/virtual
 myorigin = /etc/mailname
 mydestination = $myhostname, {{ mail_domain }}{% for d in mail_extra_domains %}, {{ d }}{% endfor %}, vultr.guest, localhost.guest, localhost
 relayhost =

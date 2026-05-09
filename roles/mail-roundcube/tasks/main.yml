@@ -1,0 +1,48 @@
+---
+# Install Roundcube via apt + PHP-FPM. Roundcube's debconf wants to ask about
+# the DB type and which web servers to auto-configure; we preseed before
+# install so apt runs non-interactively, picks SQLite, and leaves nginx for
+# the mail-nginx role to handle.
+
+- name: Validate mail_roundcube_des_key is set in vault
+  ansible.builtin.assert:
+    that:
+      - mail_roundcube_des_key | length == 24
+    fail_msg: |
+      mail_roundcube_des_key must be a 24-char hex string in vault.yml.
+      Generate one with: python3 -c "import secrets; print(secrets.token_hex(12))"
+
+- name: Preseed Roundcube debconf (SQLite, no web-server auto-config)
+  ansible.builtin.debconf:
+    name: roundcube-core
+    question: "{{ item.question }}"
+    vtype: "{{ item.vtype }}"
+    value: "{{ item.value }}"
+  loop:
+    - { question: "roundcube/dbconfig-install", vtype: "boolean", value: "true" }
+    - { question: "roundcube/database-type", vtype: "select", value: "sqlite3" }
+    - { question: "roundcube-core/reconfigure-webserver", vtype: "multiselect", value: "" }
+
+- name: Install Roundcube + PHP-FPM
+  ansible.builtin.apt:
+    name: "{{ mail_roundcube_packages }}"
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Deploy Roundcube config (subpath + IMAP target)
+  ansible.builtin.template:
+    src: config.inc.php.j2
+    dest: /etc/roundcube/config.inc.php
+    mode: "0640"
+    owner: root
+    group: www-data
+    backup: true
+  notify: Restart php-fpm
+
+- name: Ensure php-fpm is enabled and running
+  ansible.builtin.systemd:
+    name: "{{ mail_roundcube_php_fpm_service }}"
+    enabled: true
+    state: started
+  when: not ansible_check_mode   # service won't exist on first --check

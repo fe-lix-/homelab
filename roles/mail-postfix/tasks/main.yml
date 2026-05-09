@@ -19,6 +19,20 @@
     backup: true
   notify: Restart postfix
 
+- name: Deploy postfix virtual aliases
+  ansible.builtin.template:
+    src: virtual.j2
+    dest: /etc/postfix/virtual
+    mode: "0644"
+    owner: root
+    group: root
+  register: postfix_virtual
+
+- name: Compile postfix virtual map
+  ansible.builtin.command:
+    cmd: postmap /etc/postfix/virtual
+  when: postfix_virtual.changed   # noqa no-handler — must run synchronously for the new .db to take effect
+
 - name: Ensure postfix is enabled and running
   ansible.builtin.systemd:
     name: postfix

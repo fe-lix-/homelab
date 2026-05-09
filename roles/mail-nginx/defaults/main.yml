@@ -1,0 +1,6 @@
+---
+# Remote Authelia portal used for forward-auth (lives on kazad-dum, internet-reachable)
+mail_nginx_authelia_host: "auth.lab.delval.eu"
+
+# Path for the templated mail vhost (replaces the hand-written emailwiz config)
+mail_nginx_vhost_path: "/etc/nginx/sites-available/mail"

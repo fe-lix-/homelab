@@ -9,6 +9,24 @@ Reachability summary (verified by `dig` against public DNS):
 
 Public reachability still requires the router's 80/443 forward to be active and the matching nginx `server_name` block to exist.
 
+## Registrars & DNS
+
+Renewal failure on any of these domains takes everything under it offline. Auto-renew should be enabled at the registrar; this table is the human-readable cross-check.
+
+| Domain | Registrar | DNS managed at | Expires | Used for |
+|--------|-----------|----------------|---------|----------|
+| `delval.eu` | Gandi | Gandi (LiveDNS) | 2029-01-09 | Parent domain. Hosts `*.lab.delval.eu` (wildcard LE), plus standalone certs for `mail.delval.eu`, `home.delval.eu`, `paul.delval.eu`, `vault.delval.eu` |
+| `atomic313.cloud` | Gandi | Gandi (LiveDNS) | 2027-04-21 | Public alias for `paul.delval.eu` (Paul's games site, separate LE cert) |
+| `quodt.eu` | Gandi | Cloudflare | 2029-05-08 | Mail-only secondary domain on mithlond (added May 2026); receives at `<user>@quodt.eu` |
+
+Lookup notes:
+
+- **Renewal dates / domain ownership**: log in at <https://admin.gandi.net> → Domains.
+- **DNS edits**:
+  - `delval.eu`, `atomic313.cloud` — Gandi LiveDNS. Programmatic access is via the Gandi Personal Access Token stored as `certbot_gandi_api_key` in the vault (used by certbot DNS-01 for the wildcard and the standalone certs in `certbot_extra_certs`).
+  - `quodt.eu` — Cloudflare dashboard (zone manage). No automation; records added by hand.
+- **Why DNS provider differs from registrar for `quodt.eu`**: registration stayed at Gandi, but the zone was delegated to Cloudflare nameservers (`{laila,graham}.ns.cloudflare.com`) when set up there. To verify at any point: `dig +short NS <domain>`.
+
 ## Public-facing
 
 ### `home.delval.eu`
@@ -74,6 +92,14 @@ All `*.lab.delval.eu` names below resolve only to `10.0.0.163`, so they are not 
 | `unifi.lab.delval.eu` | UniFi controller (proxied to router) | UniFi self |
 | `frigate.lab.delval.eu` | Frigate NVR (proxied to barad-dur) | — (see nginx config) |
 | `manga-scheduler.lab.delval.eu` | Manga scheduler UI | Authelia forward-auth (`admin`) |
+
+## Externally hosted
+
+Names that are NOT served by our nginx — DNS lives at our provider but the content/origin is somewhere else. Listed here so a future "what is this domain doing?" question has an answer.
+
+| Domain | Hosted at | Content edited at | Notes |
+|--------|-----------|-------------------|-------|
+| `nina.quodt.eu` | Adobe AEM Edge Delivery Services (`main--nina-personal--fe-lix-.aem.live` → Fastly CDN) | Google Drive: <https://drive.google.com/drive/u/0/folders/1tX22IdJMK8XotNBca6y_PjswyMuHiATh> | Cloudflare proxied (orange cloud); zone is on Cloudflare so DNS edits at the Cloudflare dashboard. AEM EDS pulls Markdown/Word docs from the Drive folder, Fastly serves the rendered pages. Repo naming: `main--<repo>--<gh-user>` → branch `main`, repo `nina-personal`, owner `fe-lix-`. |
 
 ## Special
 

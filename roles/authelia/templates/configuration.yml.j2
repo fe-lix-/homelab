@@ -29,7 +29,11 @@ authentication_backend:
 session:
   secret: "{{ authelia_session_secret }}"
   cookies:
-    - domain: "{{ base_domain }}"
+    # Scoped to delval.eu (parent of lab.delval.eu) so the same Authelia session
+    # works on mail.delval.eu, vault.delval.eu, paul.delval.eu, etc. — not just
+    # *.lab.delval.eu. Side effect: any pre-existing browser cookies scoped to
+    # .lab.delval.eu become invalid; users re-login once after this lands.
+    - domain: "delval.eu"
       authelia_url: "https://auth.{{ base_domain }}"
       inactivity: 7d
       expiration: 7d
@@ -319,4 +323,13 @@ access_control:
       policy: one_factor
       subject:
         - "group:minecraft"
+        - "group:admin"
+
+    # Mail VPS guest mailbox webmail (Roundcube on mithlond)
+    - domain: "mail.delval.eu"
+      resources:
+        - "^/guest/?.*"
+      policy: one_factor
+      subject:
+        - "group:guest-mail"
         - "group:admin"
