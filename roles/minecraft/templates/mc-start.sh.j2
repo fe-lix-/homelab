@@ -11,6 +11,7 @@ exec >> {{ minecraft_data_dir }}/mc-start.log 2>&1
 echo "$(date -Iseconds) mc-start.sh: triggered"
 
 touch "$LOCK"
+trap 'rm -f "$LOCK"' EXIT
 
 echo "$(date -Iseconds) Starting Minecraft..."
 cd "$COMPOSE_DIR"
@@ -25,6 +26,14 @@ for i in $(seq 60); do
     fi
 done
 
+echo "$(date -Iseconds) Waiting for game port :{{ minecraft_internal_port }} (up to 2 min)..."
+for i in $(seq 24); do
+    if (echo > /dev/tcp/127.0.0.1/{{ minecraft_internal_port }}) >/dev/null 2>&1; then
+        echo "$(date -Iseconds) Game port ready after $((i * 5))s"
+        break
+    fi
+    sleep 5
+done
+
 touch "$READY_FLAG"
-rm -f "$LOCK"
 echo "$(date -Iseconds) mc-start.sh: done"
