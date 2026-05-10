@@ -1,0 +1,20 @@
+[Unit]
+Description=Mail agent — Claude-powered auto-reply for whitelisted senders
+After=network-online.target dovecot.service postfix.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User={{ mail_agent_user }}
+Group={{ mail_agent_user }}
+EnvironmentFile={{ mail_agent_install_dir }}/mail-agent.env
+# The bundled Claude Code CLI writes its cache under $HOME/.claude — the
+# mailagent user has no home dir on purpose, so point it at the data dir.
+Environment=HOME={{ mail_agent_data_dir }}
+ExecStart={{ mail_agent_venv }}/bin/python {{ mail_agent_install_dir }}/mail_agent.py
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ mail_agent_data_dir }}

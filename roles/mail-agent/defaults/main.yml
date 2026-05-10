@@ -1,0 +1,44 @@
+---
+# Mail agent — autonomous Claude-powered email auto-reply.
+# Most values can be overridden in inventories/production/group_vars/all/main.yml
+# or a host_vars/mail.yml. Secrets live in vault.
+
+mail_agent_user: mailagent
+mail_agent_install_dir: /opt/mail-agent
+mail_agent_data_dir: /var/lib/mail-agent
+mail_agent_venv: /opt/mail-agent/venv
+mail_agent_python: python3
+
+mail_agent_imap_host: 127.0.0.1
+mail_agent_imap_port: 993
+mail_agent_imap_folder: INBOX
+mail_agent_smtp_host: 127.0.0.1
+mail_agent_smtp_port: 25
+
+# --- Per-deployment values (override in inventory or vault) ---
+
+# POSIX mailbox name on mithlond (e.g. "felix"). Auth is PAM, so this user
+# must exist and have a password set via passwd.
+mail_agent_imap_user: ""
+# Vault: vault_mail_agent_imap_password
+mail_agent_imap_password: ""
+# Vault: vault_mail_agent_anthropic_api_key
+mail_agent_anthropic_api_key: ""
+
+# Address used in From: on outgoing replies. Usually "<imap-user>@delval.eu".
+mail_agent_reply_from: ""
+
+# Senders the agent will reply to. Empty list = reply to nobody (safe default).
+mail_agent_allowed_senders: []
+
+# Random delay before sending each generated reply.
+mail_agent_min_delay_seconds: 3600     # 1h
+mail_agent_max_delay_seconds: 14400    # 4h
+
+mail_agent_model: "claude-sonnet-4-6"
+mail_agent_poll_interval: "5min"
+
+# Persona block injected into the agent's system prompt. Override per-deployment.
+mail_agent_persona: |
+  You are replying as a placeholder identity. Override mail_agent_persona in
+  inventory before enabling this role.

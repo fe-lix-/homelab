@@ -1,0 +1,110 @@
+---
+- name: Validate required mail-agent config
+  ansible.builtin.assert:
+    that:
+      - mail_agent_imap_user | length > 0
+      - mail_agent_imap_password | length > 0
+      - mail_agent_anthropic_api_key | length > 0
+      - mail_agent_reply_from | length > 0
+    fail_msg: |
+      mail-agent requires the following to be set (typically via vault):
+        - mail_agent_imap_user
+        - mail_agent_imap_password    (vault_mail_agent_imap_password)
+        - mail_agent_anthropic_api_key (vault_mail_agent_anthropic_api_key)
+        - mail_agent_reply_from
+      Allowed-senders defaults to empty (= reply to nobody) on purpose.
+
+- name: Install Python venv prerequisite
+  ansible.builtin.apt:
+    name: python3-venv
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Create mail-agent service group
+  ansible.builtin.group:
+    name: "{{ mail_agent_user }}"
+    state: present
+    system: true
+
+- name: Create mail-agent service user (no shell, no home)
+  ansible.builtin.user:
+    name: "{{ mail_agent_user }}"
+    group: "{{ mail_agent_user }}"
+    system: true
+    shell: /usr/sbin/nologin
+    create_home: false
+    state: present
+
+- name: Create install + data directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    state: directory
+    owner: "{{ item.owner }}"
+    group: "{{ item.group }}"
+    mode: "{{ item.mode }}"
+  loop:
+    - { path: "{{ mail_agent_install_dir }}", owner: root, group: root, mode: "0755" }
+    - { path: "{{ mail_agent_data_dir }}", owner: "{{ mail_agent_user }}", group: "{{ mail_agent_user }}", mode: "0750" }
+
+- name: Deploy requirements.txt
+  ansible.builtin.copy:
+    src: requirements.txt
+    dest: "{{ mail_agent_install_dir }}/requirements.txt"
+    owner: root
+    group: root
+    mode: "0644"
+  register: mail_agent_requirements
+
+- name: Stat the venv interpreter
+  ansible.builtin.stat:
+    path: "{{ mail_agent_venv }}/bin/python"
+  register: mail_agent_venv_python
+
+- name: Create / refresh Python venv
+  ansible.builtin.pip:
+    requirements: "{{ mail_agent_install_dir }}/requirements.txt"
+    virtualenv: "{{ mail_agent_venv }}"
+    virtualenv_command: "{{ mail_agent_python }} -m venv"
+    state: present
+  when: mail_agent_requirements.changed or not mail_agent_venv_python.stat.exists
+
+- name: Deploy mail_agent.py
+  ansible.builtin.copy:
+    src: mail_agent.py
+    dest: "{{ mail_agent_install_dir }}/mail_agent.py"
+    owner: root
+    group: root
+    mode: "0755"
+  notify: Restart mail-agent timer
+
+- name: Deploy environment file (contains secrets)
+  ansible.builtin.template:
+    src: mail-agent.env.j2
+    dest: "{{ mail_agent_install_dir }}/mail-agent.env"
+    owner: root
+    group: "{{ mail_agent_user }}"
+    mode: "0640"
+  no_log: true
+  notify: Restart mail-agent timer
+
+- name: Deploy systemd service
+  ansible.builtin.template:
+    src: mail-agent.service.j2
+    dest: /etc/systemd/system/mail-agent.service
+    mode: "0644"
+  notify: Restart mail-agent timer
+
+- name: Deploy systemd timer
+  ansible.builtin.template:
+    src: mail-agent.timer.j2
+    dest: /etc/systemd/system/mail-agent.timer
+    mode: "0644"
+  notify: Restart mail-agent timer
+
+- name: Enable and start mail-agent timer
+  ansible.builtin.systemd:
+    name: mail-agent.timer
+    enabled: true
+    state: started
+    daemon_reload: true
