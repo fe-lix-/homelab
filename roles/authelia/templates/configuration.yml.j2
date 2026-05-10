@@ -35,6 +35,11 @@ session:
     # .lab.delval.eu become invalid; users re-login once after this lands.
     - domain: "delval.eu"
       authelia_url: "https://auth.{{ base_domain }}"
+      # Where to send the user when they log in directly at auth.lab.delval.eu
+      # (no ?rd=... query param). Without this, Authelia returns {"status":"OK"}
+      # with no redirect target and the React frontend silently re-renders the
+      # login form — looks like a bug; is actually "logged in, nowhere to go".
+      default_redirection_url: "https://{{ base_domain }}/"
       inactivity: 7d
       expiration: 7d
       remember_me: 30d

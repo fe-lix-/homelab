@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 import zipfile
 from base64 import b64encode
@@ -203,7 +204,10 @@ def notify(title: str, message: str, tags: str = "", priority: str = "default") 
     url = f"{NTFY_URL}/{NTFY_TOPIC}"
     headers = {
         "Authorization": f"Bearer {NTFY_TOKEN}",
-        "Title": title,
+        # Percent-encode the title — Python's HTTP layer encodes headers as
+        # latin-1, which can't represent emoji codepoints. ntfy decodes the
+        # percent-encoded form on its side. (See manga-chapter-checker.py.)
+        "Title": urllib.parse.quote(title, safe=" "),
         "Priority": priority,
     }
     if tags:

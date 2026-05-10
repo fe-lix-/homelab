@@ -13,3 +13,16 @@ datasources:
     type: loki
     access: proxy
     url: http://loki:3100
+
+  # Snapshot of Komga's SQLite (refreshed every {{ komga_snapshot_interval }}
+  # by komga-snapshot.timer) for the reading-activity dashboard. The mount is
+  # writable on purpose: the frser-sqlite-datasource plugin opens the DB in
+  # read-write mode and SQLite needs to write a rollback journal alongside the
+  # file even for read-only queries. The snapshot is overwritten atomically by
+  # the timer, so any write done by Grafana is wiped out on the next refresh.
+  - name: Komga
+    uid: komga-sqlite
+    type: frser-sqlite-datasource
+    access: proxy
+    jsonData:
+      path: /var/lib/komga-db/komga.sqlite
