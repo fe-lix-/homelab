@@ -1,0 +1,6 @@
+---
+- name: Restart mail-agent timer
+  ansible.builtin.systemd:
+    name: mail-agent.timer
+    state: restarted
+    daemon_reload: true

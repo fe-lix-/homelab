@@ -1,0 +1,10 @@
+[Unit]
+Description=Run mail agent every {{ mail_agent_poll_interval }}
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ mail_agent_poll_interval }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target
