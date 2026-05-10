@@ -22,3 +22,19 @@ internet_probe_targets:
   - "https://www.google.com"
   - "https://cloudflare.com"
   - "https://1.1.1.1"
+
+# Komga reading-metrics integration. Komga writes to its SQLite continuously,
+# so we snapshot a consistent copy via `sqlite3 .backup` every few minutes and
+# mount the snapshot read-only into Grafana via the frser-sqlite-datasource
+# plugin. Avoids any locking concerns on the live DB.
+komga_db_path: /opt/komga/config/database.sqlite
+# Snapshot lives in its own directory because SQLite needs to write a rollback
+# journal as a sibling file when Grafana opens the DB. We bind-mount the
+# directory (writable) into Grafana so SQLite has somewhere to put the journal.
+komga_snapshot_dir: /opt/monitoring/komga-snapshot
+komga_snapshot_path: /opt/monitoring/komga-snapshot/komga.sqlite
+komga_snapshot_interval: 5min
+# Grafana container runs as uid 472 — the snapshot dir needs to be writable
+# by that uid so SQLite can create journal files.
+komga_snapshot_owner_uid: 472
+komga_snapshot_owner_gid: 472

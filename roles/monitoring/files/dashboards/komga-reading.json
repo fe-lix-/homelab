@@ -1,0 +1,175 @@
+{
+  "title": "Komga Reading Activity",
+  "uid": "komga-reading",
+  "tags": ["komga", "reading"],
+  "timezone": "browser",
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "time": { "from": "now-90d", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Books completed (lifetime)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS books FROM READ_PROGRESS WHERE COMPLETED = 1;"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Pages read (current snapshot)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT SUM(CASE WHEN rp.COMPLETED THEN m.PAGE_COUNT ELSE rp.PAGE END) AS pages FROM READ_PROGRESS rp JOIN MEDIA m ON rp.BOOK_ID = m.BOOK_ID;"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Books in progress",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(*) AS books FROM READ_PROGRESS WHERE COMPLETED = 0;"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Active readers (last 30d)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "options": {
+        "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT COUNT(DISTINCT USER_ID) AS users FROM READ_PROGRESS WHERE LAST_MODIFIED_DATE >= datetime('now', '-30 days');"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Books finished per day",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "transformations": [
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [{ "destinationType": "time", "targetField": "time" }],
+            "fields": {}
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT CAST(strftime('%s', date(READ_DATE)) AS INTEGER) * 1000 AS time, COUNT(*) AS books FROM READ_PROGRESS WHERE COMPLETED = 1 AND READ_DATE >= datetime('now', '-90 days') GROUP BY date(READ_DATE) ORDER BY 1;"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Books touched per day (any progress)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
+      "transformations": [
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [{ "destinationType": "time", "targetField": "time" }],
+            "fields": {}
+          }
+        }
+      ],
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT CAST(strftime('%s', date(LAST_MODIFIED_DATE)) AS INTEGER) * 1000 AS time, COUNT(*) AS books FROM READ_PROGRESS WHERE LAST_MODIFIED_DATE >= datetime('now', '-90 days') GROUP BY date(LAST_MODIFIED_DATE) ORDER BY 1;"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Reading totals per user",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 13 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT u.EMAIL AS user, SUM(rp.COMPLETED) AS books_finished, COUNT(*) - SUM(rp.COMPLETED) AS in_progress, SUM(CASE WHEN rp.COMPLETED THEN m.PAGE_COUNT ELSE rp.PAGE END) AS pages FROM READ_PROGRESS rp JOIN USER u ON rp.USER_ID = u.ID JOIN MEDIA m ON rp.BOOK_ID = m.BOOK_ID GROUP BY u.EMAIL ORDER BY pages DESC;"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Recently finished books",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 13 },
+      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "queryType": "table",
+          "rawQueryText": "SELECT rp.READ_DATE AS finished, u.EMAIL AS user, sm.TITLE AS series, bm.TITLE AS book, m.PAGE_COUNT AS pages FROM READ_PROGRESS rp JOIN USER u ON rp.USER_ID = u.ID JOIN BOOK b ON rp.BOOK_ID = b.ID JOIN BOOK_METADATA bm ON b.ID = bm.BOOK_ID JOIN SERIES_METADATA sm ON b.SERIES_ID = sm.SERIES_ID JOIN MEDIA m ON b.ID = m.BOOK_ID WHERE rp.COMPLETED = 1 ORDER BY rp.READ_DATE DESC LIMIT 50;"
+        }
+      ]
+    }
+  ]
+}

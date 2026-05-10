@@ -1,0 +1,10 @@
+[Unit]
+Description=Snapshot Komga SQLite every {{ komga_snapshot_interval }}
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec={{ komga_snapshot_interval }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

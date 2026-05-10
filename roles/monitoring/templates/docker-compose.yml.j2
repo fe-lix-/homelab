@@ -106,7 +106,12 @@ services:
       - ./datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
       - ./dashboard-provider.yml:/etc/grafana/provisioning/dashboards/provider.yml:ro
       - ./dashboards:/var/lib/grafana/dashboards:ro
+      # Snapshot of Komga's SQLite, refreshed by komga-snapshot.timer.
+      # Mounted as a writable directory so SQLite can create the rollback
+      # journal it insists on writing even for read-only queries.
+      - {{ komga_snapshot_dir }}:/var/lib/komga-db
     environment:
+      GF_INSTALL_PLUGINS: "frser-sqlite-datasource"
       GF_SECURITY_ADMIN_USER: "{{ grafana_admin_user }}"
       GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
       GF_SERVER_ROOT_URL: "https://grafana.{{ base_domain }}"

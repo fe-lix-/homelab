@@ -8,6 +8,14 @@
     - "{{ monitoring_data_dir }}"
     - "{{ monitoring_textfile_dir }}"
 
+- name: Create Komga snapshot directory (owned by Grafana uid for journal writes)
+  ansible.builtin.file:
+    path: "{{ komga_snapshot_dir }}"
+    state: directory
+    owner: "{{ komga_snapshot_owner_uid }}"
+    group: "{{ komga_snapshot_owner_gid }}"
+    mode: "0755"
+
 - name: Deploy monitoring docker-compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2
@@ -92,7 +100,44 @@
     mode: "0644"
   loop:
     - logs.json
+    - komga-reading.json
   notify: Restart monitoring
+
+- name: Ensure sqlite3 CLI is installed (for the Komga snapshot service)
+  ansible.builtin.apt:
+    name: sqlite3
+    state: present
+
+- name: Deploy komga-snapshot systemd service
+  ansible.builtin.template:
+    src: komga-snapshot.service.j2
+    dest: /etc/systemd/system/komga-snapshot.service
+    mode: "0644"
+
+- name: Deploy komga-snapshot systemd timer
+  ansible.builtin.template:
+    src: komga-snapshot.timer.j2
+    dest: /etc/systemd/system/komga-snapshot.timer
+    mode: "0644"
+
+- name: Reload systemd so the snapshot start below picks up the latest unit
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Take an initial Komga snapshot before starting Grafana
+  # Grafana's compose mount references komga_snapshot_dir; without a snapshot
+  # in place, queries against the dashboard would fail until the timer fires
+  # (up to 5 minutes after deploy).
+  ansible.builtin.command:
+    cmd: "/bin/systemctl start komga-snapshot.service"
+    creates: "{{ komga_snapshot_path }}"
+
+- name: Enable and start komga-snapshot timer
+  ansible.builtin.systemd:
+    name: komga-snapshot.timer
+    enabled: true
+    state: started
+    daemon_reload: true
 
 - name: Start monitoring stack
   community.docker.docker_compose_v2:

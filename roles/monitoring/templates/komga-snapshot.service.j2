@@ -1,0 +1,26 @@
+[Unit]
+Description=Snapshot Komga SQLite for Grafana queries
+Documentation=https://www.sqlite.org/cli.html#dotbackup
+After=docker.service
+ConditionPathExists={{ komga_db_path }}
+
+[Service]
+Type=oneshot
+# .backup is the SQLite-recommended way to copy a live DB safely. The follow-up
+# `PRAGMA journal_mode=DELETE` flips the header out of WAL mode (the snapshot
+# inherits Komga's WAL setting) so a read-only consumer like Grafana doesn't
+# trigger SQLITE_READONLY_RECOVERY (error 1544) on open. Writing to a .tmp
+# first + mv keeps the swap atomic so Grafana never sees a half-written file.
+ExecStart=/usr/bin/sqlite3 {{ komga_db_path }} ".backup '{{ komga_snapshot_path }}.tmp'"
+ExecStartPost=/usr/bin/sqlite3 {{ komga_snapshot_path }}.tmp "PRAGMA journal_mode=DELETE;"
+ExecStartPost=/bin/mv {{ komga_snapshot_path }}.tmp {{ komga_snapshot_path }}
+# Hand the snapshot to Grafana's uid so SQLite can take its locks.
+ExecStartPost=/bin/chown {{ komga_snapshot_owner_uid }}:{{ komga_snapshot_owner_gid }} {{ komga_snapshot_path }}
+ExecStartPost=/bin/chmod 0644 {{ komga_snapshot_path }}
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ monitoring_data_dir }}
+ReadOnlyPaths=/opt/komga/config
