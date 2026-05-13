@@ -31,6 +31,33 @@
     cache_valid_time: 3600
     install_recommends: false   # roundcube-core recommends apache2; we use nginx
 
+# php-fpm package name is versioned per OS release (php8.1-fpm on jammy,
+# php8.3-fpm on noble, etc.). Discover the installed version and override
+# the role defaults so service-restart, socket path, and the nginx fastcgi
+# bind all reference the right thing on any Ubuntu release.
+# Match only versioned packages (`php8.1-fpm`, `php8.3-fpm`...) not the
+# meta `php-fpm` transitional package — the meta isn't a valid systemd
+# unit name or socket path.
+- name: Discover installed php-fpm versioned package
+  ansible.builtin.shell: |
+    set -o pipefail
+    dpkg-query -W -f='${Package}\n' 'php*-fpm' 2>/dev/null \
+      | grep -E '^php[0-9.]+-fpm$' \
+      | head -1
+  args:
+    executable: /bin/bash
+  register: php_fpm_pkg_query
+  changed_when: false
+  check_mode: false
+
+- name: Set php-fpm service + socket facts from discovered package
+  ansible.builtin.set_fact:
+    mail_roundcube_php_fpm_service: "{{ pkg }}"
+    mail_roundcube_php_fpm_sock: "/run/php/{{ pkg }}.sock"
+  vars:
+    pkg: "{{ php_fpm_pkg_query.stdout | trim }}"
+  when: php_fpm_pkg_query.stdout | trim | length > 0
+
 # Defense in depth: ensure the apache2 server binary stays gone even if a
 # transitive dep pulls it in. apache2 binds 0.0.0.0:80 which collides with
 # nginx (and with certbot --standalone bootstrap).

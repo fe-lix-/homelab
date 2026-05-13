@@ -25,7 +25,12 @@ mail_roundcube_request_path: "/guest"
 # Document root after apt install (Ubuntu jammy)
 mail_roundcube_doc_root: "/var/lib/roundcube/public_html"
 
-# PHP-FPM (Ubuntu jammy ships php-fpm 8.1)
+# PHP-FPM service + socket. These fallback defaults match Ubuntu jammy
+# (php-fpm 8.1). On a different OS release the actual installed version may
+# differ (e.g. noble ships 8.3). The role's tasks discover the installed
+# package after `apt install` and set_fact-override these values, so the
+# defaults only apply to playbook runs that target mail-nginx in isolation
+# without having run mail-roundcube first.
 mail_roundcube_php_fpm_service: "php8.1-fpm"
 mail_roundcube_php_fpm_sock: "/run/php/php8.1-fpm.sock"
 
