@@ -1,4 +1,42 @@
 ---
+# Pre-flight: rDNS for the public IP must match mail_hostname (FCrDNS check
+# done by Gmail/M365/Apple). Vultr defaults to a generic
+# <ip>.vultrusercontent.com PTR, which strict spam filters downgrade. Set
+# the PTR via:
+#   vultr-cli instance reverse-dns set-ipv4 <instance-id> <ipv4> --entry {{ mail_hostname }}
+# Custom PTRs follow the IP across reserved-IP swaps, so this is a one-time
+# action per VPS lifetime. We don't manage the PTR from Ansible (would need
+# a Vultr API token on the control machine and is out of scope for an
+# in-box config role) but we assert correctness on every deploy so a
+# rebuilt VPS that forgot the manual step fails loud here.
+# Query a public resolver (not the local one) so this matches what Gmail /
+# M365 / Apple see. The local resolver can hold a stale PTR cached well past
+# a Vultr rDNS change. check_mode: false because the lookup is read-only and
+# command-module tasks otherwise skip under --check, leaving stdout empty
+# and the assert below firing on bogus data.
+- name: Look up rDNS for the public IP (via 1.1.1.1)
+  ansible.builtin.command:
+    cmd: "dig +short -x {{ ansible_facts.default_ipv4.address }} @1.1.1.1"
+  register: mail_rdns_check
+  changed_when: false
+  check_mode: false
+  delegate_to: localhost
+  become: false
+
+- name: Assert rDNS matches mail_hostname
+  ansible.builtin.assert:
+    that:
+      - (mail_rdns_check.stdout | trim | regex_replace('\.$', '')) == mail_hostname
+    fail_msg: >-
+      rDNS for {{ ansible_facts.default_ipv4.address }} is
+      '{{ mail_rdns_check.stdout | trim | default("<empty>") }}',
+      expected '{{ mail_hostname }}'. Fix with:
+      vultr-cli instance reverse-dns set-ipv4 <instance-id>
+      {{ ansible_facts.default_ipv4.address }} --entry {{ mail_hostname }}.
+      Vultr authoritative reverse DNS can take a few minutes to propagate
+      after `set-ipv4`. Strict spam filters (M365, corporate appliances)
+      downgrade outbound mail until this is fixed.
+
 - name: Install mail server packages
   ansible.builtin.apt:
     name: "{{ mail_packages }}"
