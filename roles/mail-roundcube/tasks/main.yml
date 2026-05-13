@@ -31,16 +31,23 @@
     cache_valid_time: 3600
     install_recommends: false   # roundcube-core recommends apache2; we use nginx
 
-# Defense in depth: ensure apache2 stays gone even if a transitive dep pulls it
-# in. apache2 binds 0.0.0.0:80 which collides with nginx (and with certbot
-# --standalone bootstrap).
-- name: Ensure apache2 is purged
+# Defense in depth: ensure the apache2 server binary stays gone even if a
+# transitive dep pulls it in. apache2 binds 0.0.0.0:80 which collides with
+# nginx (and with certbot --standalone bootstrap).
+#
+# IMPORTANT — purge `apache2` only, NOT `apache2-bin`:
+# roundcube-core depends on `libapache2-mod-php | php-fpm` and apt's
+# resolver picks the first alternative, dragging in libapache2-mod-php →
+# apache2-bin. Purging apache2-bin cascades to remove roundcube-core
+# itself (silently breaking webmail). The mod-php is harmless because the
+# apache2 daemon — which would load it — isn't installed.
+#
+# `autoremove` is OFF for the same reason: a true autoremove sweep yanks
+# roundcube-core when apache2 disappears, since apt considers roundcube-core
+# auto-installed and the apache reverse-dep is gone.
+- name: Ensure apache2 server binary is purged
   ansible.builtin.apt:
-    name:
-      - apache2
-      - apache2-bin
-      - apache2-data
-      - apache2-utils
+    name: apache2
     state: absent
     purge: true
 

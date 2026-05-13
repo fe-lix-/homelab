@@ -27,4 +27,4 @@ USER=opendkim
 GROUP=opendkim
 PIDFILE=$RUNDIR/$NAME.pid
 EXTRAAFTER=
-SOCKET="inet:12301@localhost"
+SOCKET="inet:{{ mail_opendkim_socket_port }}@localhost"

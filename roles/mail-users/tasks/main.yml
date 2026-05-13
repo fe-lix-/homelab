@@ -8,6 +8,12 @@
     name: mail
     state: present
 
+# update_password is `on_create` (not `always`) so re-runs don't rewrite the
+# password hash on every play (Ansible can't compare a salted hash to its
+# vault source, so `always` always reports changed). To rotate a password:
+#   1. Update password_hash in vault.yml (via `make vault-edit`)
+#   2. Either `chpasswd` manually on the box, OR temporarily flip this to
+#      `update_password: always` for one deploy, then flip back.
 - name: Create / update mailbox users
   ansible.builtin.user:
     name: "{{ item.name }}"
@@ -18,7 +24,7 @@
     append: false
     create_home: true
     state: present
-    update_password: always
+    update_password: on_create
   loop: "{{ mail_users | rejectattr('state', 'defined') | list + (mail_users | selectattr('state', 'defined') | selectattr('state', 'eq', 'present') | list) }}"
   loop_control:
     label: "{{ item.name }}"
