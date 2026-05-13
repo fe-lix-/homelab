@@ -12,7 +12,7 @@
   ansible.builtin.user:
     name: "{{ item.name }}"
     comment: "{{ item.full_name | default('') }}"
-    shell: "{{ item.shell | default('/bin/sh') }}"
+    shell: "{{ item.shell | default('/usr/sbin/nologin') }}"
     password: "{{ item.password_hash }}"
     groups: "{{ (mail_users_default_groups + (item.groups | default([]))) | unique }}"
     append: false

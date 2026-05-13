@@ -735,7 +735,14 @@ def sushiscan_download_entry(entry: dict, series_name: str, dest_dir: Path) -> P
         cookie_header = sushiscan_build_cookie_header(cookies)
         log(f"  Got {len(cookies)} cookie(s), downloading {len(needed)} page(s)...")
 
-        failed_pages = []
+        # Track missing (404 — page genuinely doesn't exist; sushiscan sometimes
+        # reports a higher page count than actually uploaded) separately from
+        # blocked (403/429 — CDN actively refusing us). Missing pages are
+        # tolerated up to MISSING_PAGE_TOLERANCE; blocked pages on the first
+        # attempt trigger the fast-fail "use local script" path.
+        MISSING_PAGE_TOLERANCE = 3
+        failed_pages: list[int] = []
+        missing_pages: list[int] = []
         for i, img_url, page_name, page_path in needed:
             log(f"  Page {i}/{total_pages}", transient=True)
             try:
@@ -745,23 +752,40 @@ def sushiscan_download_entry(entry: dict, series_name: str, dest_dir: Path) -> P
                 else:
                     log(f"  Page {i}: not an image ({len(img_data)} bytes)")
                     failed_pages.append(i)
+            except urllib.error.HTTPError as exc:
+                if exc.code == 404:
+                    log(f"  Page {i} missing on CDN (HTTP 404) — skipping")
+                    missing_pages.append(i)
+                elif exc.code in (403, 429):
+                    # Genuine CDN block — fail fast on the very first attempt
+                    # so we don't burn ByParr quota retrying every page.
+                    failed_pages.append(i)
+                    if len(failed_pages) == 1 and i == needed[0][0]:
+                        log(f"  CDN block (HTTP {exc.code}) on first image — stopping.")
+                        log(f"  Use the local script: scripts/sushiscan-download.py")
+                        raise CDNBlockedError(
+                            f"CDN blocked first image download (HTTP {exc.code}). "
+                            f"Use the local script (scripts/sushiscan-download.py) with your browser cookie."
+                        )
+                else:
+                    log(f"  Page {i} failed: HTTP {exc.code} {exc.reason}")
+                    failed_pages.append(i)
             except Exception as exc:
                 log(f"  Page {i} failed: {exc}")
                 failed_pages.append(i)
-                # If first page fails, CDN is likely blocking — stop immediately
-                if len(failed_pages) == 1 and i == needed[0][0]:
-                    log(f"  CDN blocking detected on first image — stopping.")
-                    log(f"  Use the local script: scripts/sushiscan-download.py")
-                    raise CDNBlockedError(
-                        f"CDN blocked first image download. "
-                        f"Use the local script (scripts/sushiscan-download.py) with your browser cookie."
-                    )
             time.sleep(random.uniform(0.3, 1.0))
 
         if failed_pages:
             msg = f"{len(failed_pages)}/{total_pages} page(s) failed. "
             msg += "Use the local script (scripts/sushiscan-download.py) if CDN keeps blocking."
             raise RuntimeError(msg)
+        if missing_pages:
+            if len(missing_pages) > MISSING_PAGE_TOLERANCE:
+                raise RuntimeError(
+                    f"{len(missing_pages)}/{total_pages} pages 404'd on CDN — "
+                    f"sushiscan reader page likely lying about page count. Manual inspection needed."
+                )
+            log(f"  {len(missing_pages)} page(s) missing on CDN — proceeding without them: {missing_pages}")
 
     # All pages present — build CBZ
     cbz_name = f"{name}.cbz"
@@ -769,16 +793,20 @@ def sushiscan_download_entry(entry: dict, series_name: str, dest_dir: Path) -> P
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     buf = io.BytesIO()
+    pages_in_cbz = 0
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
         for i in range(1, total_pages + 1):
             matches = list(staging_dir.glob(f"{i:03d}.*"))
             matches = [m for m in matches if m.suffix != ".json"]
             if not matches:
-                raise RuntimeError(f"Page {i} missing from staging after download")
+                # Tolerated missing page (404 from CDN). The CBR/CBZ reader
+                # will sort by filename so a gap in the numbering is fine.
+                continue
             page_path = matches[0]
             zf.writestr(page_path.name, page_path.read_bytes())
+            pages_in_cbz += 1
 
-        comicinfo = sushiscan_make_comicinfo(series_name, entry, total_pages)
+        comicinfo = sushiscan_make_comicinfo(series_name, entry, pages_in_cbz)
         zf.writestr("ComicInfo.xml", comicinfo.encode("utf-8"))
 
     with cbz_path.open("wb") as f:
@@ -787,7 +815,7 @@ def sushiscan_download_entry(entry: dict, series_name: str, dest_dir: Path) -> P
     # Clean up staging for this entry
     shutil.rmtree(staging_dir)
 
-    log(f"Created: {cbz_name} ({total_pages} pages, {len(buf.getvalue()) // 1024}KB)")
+    log(f"Created: {cbz_name} ({pages_in_cbz}/{total_pages} pages, {len(buf.getvalue()) // 1024}KB)")
     return cbz_path
 
 
