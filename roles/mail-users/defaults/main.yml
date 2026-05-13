@@ -4,7 +4,7 @@
 #
 #   - name: nina
 #     full_name: "Nina Q"            # optional GECOS field
-#     shell: /bin/sh                  # /bin/sh for mailbox-only, /bin/bash for admins
+#     shell: /usr/sbin/nologin        # default; mailbox-only PAM auth works without a login shell. Override to /bin/bash for admins only.
 #     password_hash: "$6$..."         # crypt-style hash (SHA-512 / yescrypt / `!` to lock)
 #     groups: [mail]                  # extra groups
 #     state: present                  # present/absent (default present)

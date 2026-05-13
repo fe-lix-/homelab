@@ -69,9 +69,10 @@
     {
       "id": 4,
       "type": "stat",
-      "title": "Active readers (last 30d)",
+      "title": "Pages viewed today",
+      "description": "Pages viewed in the last 24h from nginx access logs (GET /api/v1/books/<id>/pages/<n>, excluding nginx buffering-warning duplicates). Independent of bulk mark-as-read (which hits PATCH /read-progress, not GET /pages).",
       "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "datasource": { "type": "loki", "uid": "loki" },
       "options": {
         "reduceOptions": { "values": false, "calcs": ["lastNotNull"], "fields": "" },
         "colorMode": "value",
@@ -80,64 +81,52 @@
       "targets": [
         {
           "refId": "A",
-          "queryType": "table",
-          "rawQueryText": "SELECT COUNT(DISTINCT USER_ID) AS users FROM READ_PROGRESS WHERE LAST_MODIFIED_DATE >= datetime('now', '-30 days');"
+          "expr": "sum(count_over_time({container=\"nginx\"} |= \"GET /api/v1/books/\" |= \"/pages/\" != \"[warn]\" [24h]))",
+          "queryType": "instant"
         }
       ]
     },
     {
       "id": 5,
       "type": "timeseries",
-      "title": "Books finished per day",
+      "title": "Pages viewed per day",
+      "description": "Daily page views from nginx access logs. One row per real GET /api/v1/books/<id>/pages/<n> request (nginx buffering-warning duplicates filtered out). Independent of bulk mark-as-read.",
       "gridPos": { "h": 9, "w": 12, "x": 0, "y": 4 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "datasource": { "type": "loki", "uid": "loki" },
       "fieldConfig": {
-        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 } },
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 }, "unit": "short" },
         "overrides": []
       },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "transformations": [
-        {
-          "id": "convertFieldType",
-          "options": {
-            "conversions": [{ "destinationType": "time", "targetField": "time" }],
-            "fields": {}
-          }
-        }
-      ],
       "targets": [
         {
           "refId": "A",
-          "queryType": "table",
-          "rawQueryText": "SELECT CAST(strftime('%s', date(READ_DATE)) AS INTEGER) * 1000 AS time, COUNT(*) AS books FROM READ_PROGRESS WHERE COMPLETED = 1 AND READ_DATE >= datetime('now', '-90 days') GROUP BY date(READ_DATE) ORDER BY 1;"
+          "expr": "sum(count_over_time({container=\"nginx\"} |= \"GET /api/v1/books/\" |= \"/pages/\" != \"[warn]\" [1d]))",
+          "queryType": "range",
+          "step": "1d",
+          "legendFormat": "pages"
         }
       ]
     },
     {
       "id": 6,
       "type": "timeseries",
-      "title": "Books touched per day (any progress)",
+      "title": "Pages viewed per hour, last 24h",
+      "description": "Hourly buckets of page views (nginx access logs, warns filtered). Useful for spotting active reading sessions vs. background activity.",
       "gridPos": { "h": 9, "w": 12, "x": 12, "y": 4 },
-      "datasource": { "type": "frser-sqlite-datasource", "uid": "komga-sqlite" },
+      "datasource": { "type": "loki", "uid": "loki" },
       "fieldConfig": {
-        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 } },
+        "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60, "lineWidth": 1 }, "unit": "short" },
         "overrides": []
       },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" } },
-      "transformations": [
-        {
-          "id": "convertFieldType",
-          "options": {
-            "conversions": [{ "destinationType": "time", "targetField": "time" }],
-            "fields": {}
-          }
-        }
-      ],
       "targets": [
         {
           "refId": "A",
-          "queryType": "table",
-          "rawQueryText": "SELECT CAST(strftime('%s', date(LAST_MODIFIED_DATE)) AS INTEGER) * 1000 AS time, COUNT(*) AS books FROM READ_PROGRESS WHERE LAST_MODIFIED_DATE >= datetime('now', '-90 days') GROUP BY date(LAST_MODIFIED_DATE) ORDER BY 1;"
+          "expr": "sum(count_over_time({container=\"nginx\"} |= \"GET /api/v1/books/\" |= \"/pages/\" != \"[warn]\" [1h]))",
+          "queryType": "range",
+          "step": "1h",
+          "legendFormat": "pages"
         }
       ]
     },

@@ -14,6 +14,14 @@
     owner: root
     group: root
 
+- name: Ensure landing-page docroot exists
+  ansible.builtin.file:
+    path: /var/www/mail
+    state: directory
+    mode: "0755"
+    owner: www-data
+    group: www-data
+
 - name: Deploy Mithlond landing page
   ansible.builtin.copy:
     src: "{{ role_path }}/templates/index.html"
