@@ -1,15 +1,11 @@
 ---
-- name: Look up vmail user
-  ansible.builtin.getent:
-    database: passwd
-    key: vmail
-    fail_key: false
-
-- name: Create vmail user if missing
+# vmail owns the dovecot sieve dir and (legacy) mail spool data. No shell
+# needed — dovecot uses the uid for file ownership, not for spawning processes.
+- name: Ensure vmail system user exists
   ansible.builtin.user:
     name: vmail
     state: present
-  when: ansible_facts.getent_passwd.vmail is none
+    shell: /usr/sbin/nologin
 
 - name: Deploy dovecot.conf
   ansible.builtin.template:

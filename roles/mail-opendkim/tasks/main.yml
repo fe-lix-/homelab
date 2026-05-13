@@ -143,8 +143,8 @@
   notify: Restart opendkim
 
 - name: Deploy /etc/opendkim.conf
-  ansible.builtin.copy:
-    src: opendkim.conf
+  ansible.builtin.template:
+    src: opendkim.conf.j2
     dest: /etc/opendkim.conf
     mode: "0644"
     owner: root
@@ -153,8 +153,8 @@
   notify: Restart opendkim
 
 - name: Deploy /etc/default/opendkim
-  ansible.builtin.copy:
-    src: default
+  ansible.builtin.template:
+    src: default.j2
     dest: /etc/default/opendkim
     mode: "0644"
     owner: root

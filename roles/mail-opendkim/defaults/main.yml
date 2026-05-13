@@ -1,0 +1,6 @@
+---
+# TCP port the opendkim milter listens on (localhost-only).
+# Referenced by mail-postfix/templates/main.cf.j2 (smtpd_milters /
+# non_smtpd_milters) and by this role's templates (opendkim.conf.j2,
+# default.j2). Single source of truth — do not hardcode the port anywhere else.
+mail_opendkim_socket_port: 12301
