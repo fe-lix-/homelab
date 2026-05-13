@@ -17,6 +17,47 @@
     dest: /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh
     mode: "0755"
 
+# On a fresh VPS, nginx isn't up yet when this role runs (mail-nginx runs later
+# in site-mail.yml), so `--authenticator nginx` cannot complete the HTTP-01
+# challenge. Bootstrap via `--standalone` instead (binds certbot's own port-80
+# listener; assumes nothing is bound to :80 yet). After issuance, patch the
+# renewal config so certbot.timer's daily runs use the nginx authenticator —
+# by then nginx is up and owns :80, which would make --standalone collide.
+#
+# Edge case: if cert is missing AND nginx is already running (manual deletion
+# on a running box), the standalone task will fail to bind :80. Stop nginx
+# first, then re-run.
+- name: Stat existing LE cert
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/live/{{ mail_hostname }}/fullchain.pem"
+  register: le_cert
+
+- name: Bootstrap cert with --standalone (fresh box, no cert yet)
+  ansible.builtin.command:
+    cmd: >
+      certbot certonly
+      --standalone
+      --cert-name {{ mail_hostname }}
+      -d {{ mail_hostname }}
+      --agree-tos
+      --email {{ certbot_email }}
+      --non-interactive
+      --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh
+  when: not le_cert.stat.exists
+  notify:
+    - Restart postfix
+    - Restart dovecot
+
+- name: Patch renewal config to use nginx authenticator (post-bootstrap)
+  ansible.builtin.lineinfile:
+    path: "/etc/letsencrypt/renewal/{{ mail_hostname }}.conf"
+    regexp: "{{ item.regexp }}"
+    line: "{{ item.line }}"
+  loop:
+    - { regexp: '^authenticator\s*=', line: "authenticator = nginx" }
+    - { regexp: '^installer\s*=', line: "installer = nginx" }
+  when: not le_cert.stat.exists
+
 - name: Renew mail cert via nginx HTTP-01 (no-op if not yet near expiry)
   ansible.builtin.command:
     cmd: >
@@ -32,6 +73,7 @@
       --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh
   register: certbot_run
   changed_when: "'no action taken' not in certbot_run.stdout"
+  when: le_cert.stat.exists
   notify:
     - Restart postfix
     - Restart dovecot
