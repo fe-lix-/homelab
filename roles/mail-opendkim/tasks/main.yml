@@ -35,17 +35,22 @@
     - mail_dkim_private_keys[mail_domain] | default('') | length == 0
   notify: Restart opendkim
 
-# .txt is the public DNS record; not loaded by opendkim and not present after a
-# vault-restore (vault stores .private only). failed_when: false lets the loop
-# skip the missing .txt without aborting the play.
-- name: Set group on DKIM key files
+# Split into two tasks: the .private file's perms are security-critical (DKIM
+# signing breaks silently if opendkim can't read the key), so any error there
+# must fail loud. The .txt file is the public DNS record (not loaded by
+# opendkim) and is legitimately missing after a vault-restore — failed_when:
+# false on that one only, so the loop doesn't abort on absent .txt.
+- name: Set group/mode on primary DKIM .private (strict — failures must surface)
   ansible.builtin.file:
-    path: "{{ item }}"
+    path: "/etc/postfix/dkim/{{ mail_subdomain }}.private"
     group: opendkim
     mode: "0640"
-  loop:
-    - "/etc/postfix/dkim/{{ mail_subdomain }}.private"
-    - "/etc/postfix/dkim/{{ mail_subdomain }}.txt"
+
+- name: Set group/mode on primary DKIM .txt (lenient — may be absent post-vault-restore)
+  ansible.builtin.file:
+    path: "/etc/postfix/dkim/{{ mail_subdomain }}.txt"
+    group: opendkim
+    mode: "0640"
   failed_when: false
 
 # Per-domain DKIM keys for additional virtual domains. Same never-regenerate
@@ -95,12 +100,19 @@
     label: "{{ item.item }}"
   notify: Restart opendkim
 
-- name: Set group on extra-domain DKIM key files
+- name: Set group/mode on extra-domain DKIM .private (strict)
   ansible.builtin.file:
-    path: "/etc/postfix/dkim/{{ item.0 }}/{{ mail_subdomain }}.{{ item.1 }}"
+    path: "/etc/postfix/dkim/{{ item }}/{{ mail_subdomain }}.private"
     group: opendkim
     mode: "0640"
-  loop: "{{ mail_extra_domains | product(['private', 'txt']) | list }}"
+  loop: "{{ mail_extra_domains }}"
+
+- name: Set group/mode on extra-domain DKIM .txt (lenient — may be absent post-vault-restore)
+  ansible.builtin.file:
+    path: "/etc/postfix/dkim/{{ item }}/{{ mail_subdomain }}.txt"
+    group: opendkim
+    mode: "0640"
+  loop: "{{ mail_extra_domains }}"
   failed_when: false
 
 - name: Deploy DKIM keytable

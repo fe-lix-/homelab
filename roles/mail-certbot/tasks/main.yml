@@ -48,7 +48,12 @@
     - Restart postfix
     - Restart dovecot
 
-- name: Patch renewal config to use nginx authenticator (post-bootstrap)
+# Always reapply so drift is repaired — lineinfile is idempotent. If someone
+# manually edits the renewal conf (or it ever resets to standalone), the next
+# play restores the nginx authenticator. Only ever runs if the renewal conf
+# already exists (i.e. cert has been issued at some point — bootstrap creates
+# it, fresh-install runs without a cert skip via failed_when on absence).
+- name: Patch renewal config to use nginx authenticator
   ansible.builtin.lineinfile:
     path: "/etc/letsencrypt/renewal/{{ mail_hostname }}.conf"
     regexp: "{{ item.regexp }}"
@@ -56,7 +61,7 @@
   loop:
     - { regexp: '^authenticator\s*=', line: "authenticator = nginx" }
     - { regexp: '^installer\s*=', line: "installer = nginx" }
-  when: not le_cert.stat.exists
+  failed_when: false   # renewal conf doesn't exist yet on a never-issued box
 
 - name: Renew mail cert via nginx HTTP-01 (no-op if not yet near expiry)
   ansible.builtin.command:
