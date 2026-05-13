@@ -16,3 +16,5 @@ mail_packages:
   - opendkim-tools
   - spamassassin
   - spamc
+  - certbot
+  - python3-certbot-nginx
