@@ -1,4 +1,13 @@
 ---
+# nginx is installed by this role (not mail-base) so that mail-certbot can run
+# its --standalone bootstrap before nginx claims port 80 on a fresh install.
+- name: Install nginx
+  ansible.builtin.apt:
+    name: nginx
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
 - name: Deploy mail nginx vhost
   ansible.builtin.template:
     src: mail.conf.j2
