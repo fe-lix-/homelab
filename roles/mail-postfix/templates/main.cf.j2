@@ -65,4 +65,10 @@ milter_default_action = accept
 milter_protocol = 6
 smtpd_milters = inet:localhost:{{ mail_opendkim_socket_port }}
 non_smtpd_milters = inet:localhost:{{ mail_opendkim_socket_port }}
+# Route Postfix-generated mail (bounce DSNs + deferred-delivery notices)
+# through non_smtpd_milters so OpenDKIM signs them. Without this, bounces
+# have an empty MAIL FROM:<> and no DKIM signature -> DMARC fails at
+# Gmail/M365 (~136 such fails observed in DMARC reports over 5 years).
+# With DKIM signing, alignment passes on the d= tag regardless of envelope.
+internal_mail_filter_classes = bounce, notify
 mailbox_command = /usr/lib/dovecot/deliver
