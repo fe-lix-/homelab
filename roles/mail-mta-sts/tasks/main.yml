@@ -1,0 +1,115 @@
+---
+# MTA-STS policy serving. Two distinct concerns handled here:
+#  1. Render and serve the policy file at https://mta-sts.<domain>/.well-known/mta-sts.txt
+#  2. Manage the LE cert that fronts those endpoints (separate from the
+#     main mail cert so renewal failures here don't break IMAP/SMTP)
+#
+# Bootstrap flow on a fresh install:
+#  - Deploy port-80 server blocks first (no cert needed)
+#  - Run certbot --webroot to acquire the LE cert
+#  - Re-deploy vhost to add the port-443 server blocks (cert now exists)
+#
+# PRE-REQUISITES (do these at the DNS provider BEFORE first deploy):
+#   - mta-sts.<domain> A <mail VPS IP>      (so HTTP-01 challenge can reach this box)
+#   - _mta-sts.<domain> TXT "v=STSv1; id=<any unique string>"   (TXT can be added after)
+#   - _smtp._tls.<domain> TXT "v=TLSRPTv1; rua=mailto:dmarc@<domain>"   (TLS-RPT, optional but recommended)
+
+- name: Ensure MTA-STS webroot exists per domain
+  ansible.builtin.file:
+    path: "/var/www/mta-sts/{{ item }}/.well-known"
+    state: directory
+    mode: "0755"
+    owner: www-data
+    group: www-data
+    recurse: true
+  loop: "{{ mail_mta_sts_domains }}"
+
+- name: Render MTA-STS policy file per domain
+  ansible.builtin.template:
+    src: mta-sts.txt.j2
+    dest: "/var/www/mta-sts/{{ item }}/.well-known/mta-sts.txt"
+    mode: "0644"
+    owner: www-data
+    group: www-data
+  loop: "{{ mail_mta_sts_domains }}"
+
+# Cert under /etc/letsencrypt/live/mta-sts.<first>/ covers all
+# mta-sts.<other> hostnames as SANs. The renewal config file's existence
+# is the canonical "real LE cert issued" signal — fullchain.pem alone
+# can be a stub.
+- name: Stat MTA-STS LE renewal config
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/renewal/mta-sts.{{ mail_mta_sts_domains | first }}.conf"
+  register: mta_sts_renewal
+
+- name: Deploy MTA-STS nginx vhost (port-80 always; port-443 only when cert exists)
+  ansible.builtin.template:
+    src: mta-sts.conf.j2
+    dest: /etc/nginx/sites-available/mta-sts
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  vars:
+    mta_sts_cert_present: "{{ mta_sts_renewal.stat.exists }}"
+  notify: Reload nginx (mta-sts)
+
+- name: Enable MTA-STS vhost
+  ansible.builtin.file:
+    src: /etc/nginx/sites-available/mta-sts
+    dest: /etc/nginx/sites-enabled/mta-sts
+    state: link
+  notify: Reload nginx (mta-sts)
+
+# nginx needs to be reloaded with the port-80 block live before certbot
+# can validate via HTTP-01.
+- name: Flush handlers so nginx is reloaded before certbot
+  ansible.builtin.meta: flush_handlers
+
+# Clean up any leftover /etc/letsencrypt/live/mta-sts.X dir or empty
+# renewal conf from a previous failed deploy. Without this, certbot
+# falls back to a `-0001` suffix on the cert-name to avoid clobbering,
+# but our nginx config references the bare path → cert mismatch.
+- name: Remove stale cert artifacts if no real renewal conf exists yet
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop:
+    - "/etc/letsencrypt/live/mta-sts.{{ mail_mta_sts_domains | first }}"
+    - "/etc/letsencrypt/archive/mta-sts.{{ mail_mta_sts_domains | first }}"
+    - "/etc/letsencrypt/renewal/mta-sts.{{ mail_mta_sts_domains | first }}.conf"
+  when: not mta_sts_renewal.stat.exists
+
+- name: Acquire MTA-STS cert via certbot --webroot (all SANs in one cert)
+  ansible.builtin.command:
+    cmd: >
+      certbot certonly --webroot
+      --cert-name mta-sts.{{ mail_mta_sts_domains | first }}
+      {% for d in mail_mta_sts_domains %}
+      -w /var/www/mta-sts/{{ d }} -d mta-sts.{{ d }}
+      {% endfor %}
+      --agree-tos --email {{ certbot_email }}
+      --non-interactive --keep-until-expiring
+      --deploy-hook 'systemctl reload nginx'
+  register: mta_sts_certbot
+  changed_when: "'no action taken' not in mta_sts_certbot.stdout and 'not yet due for renewal' not in mta_sts_certbot.stdout"
+
+# Re-render the vhost so the HTTPS server blocks appear now that the
+# cert exists. The first template render before certbot would have left
+# them out (Jinja branched on the pre-issuance stat).
+- name: Re-stat renewal config after certbot
+  ansible.builtin.stat:
+    path: "/etc/letsencrypt/renewal/mta-sts.{{ mail_mta_sts_domains | first }}.conf"
+  register: mta_sts_renewal_post
+
+- name: Re-deploy nginx vhost with HTTPS block now that cert is present
+  ansible.builtin.template:
+    src: mta-sts.conf.j2
+    dest: /etc/nginx/sites-available/mta-sts
+    mode: "0644"
+    owner: root
+    group: root
+    backup: true
+  vars:
+    mta_sts_cert_present: "{{ mta_sts_renewal_post.stat.exists }}"
+  notify: Reload nginx (mta-sts)

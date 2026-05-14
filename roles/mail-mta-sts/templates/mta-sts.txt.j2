@@ -1,0 +1,6 @@
+version: STSv1
+mode: {{ mail_mta_sts_mode }}
+{% for mx in mail_mta_sts_mx %}
+mx: {{ mx }}
+{% endfor %}
+max_age: {{ mail_mta_sts_max_age }}

@@ -1,0 +1,28 @@
+---
+# MTA-STS (RFC 8461): tells supporting receivers (Gmail, M365, ...) to
+# require TLS to our MX hostnames and fail closed on bad/missing certs.
+# Companion to TLS-RPT (RFC 8460), which is just a DNS TXT record.
+
+# Domains this VPS publishes MTA-STS policies for. Each becomes a
+# webroot at /var/www/mta-sts/<domain>/ and an nginx server_name
+# mta-sts.<domain>.
+mail_mta_sts_domains:
+  - delval.eu
+  - quodt.eu
+
+# Policy mode. One of:
+#   - enforce: receiver MUST require TLS + cert validity → bounces on failure
+#   - testing: receiver SHOULD send a TLS-RPT report on failure but still
+#              deliver via plaintext (use for the first week if cautious)
+#   - none:    advertises no policy (don't use; just remove the role instead)
+mail_mta_sts_mode: enforce
+
+# Time receivers may cache the policy before refetching, in seconds.
+# 86400 = 1 day, the de-facto starting value. RFC recommends >= 604800
+# once stable. Keep low while iterating.
+mail_mta_sts_max_age: 86400
+
+# MX hostnames the policy lists (must match what your domains' MX records
+# point to). All our domains route through mail.delval.eu.
+mail_mta_sts_mx:
+  - "{{ mail_hostname }}"

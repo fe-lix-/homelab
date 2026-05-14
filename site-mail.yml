@@ -24,6 +24,8 @@
       tags: mail-roundcube
     - role: mail-nginx
       tags: mail-nginx
+    - role: mail-mta-sts
+      tags: mail-mta-sts
     - role: mail-fail2ban
       tags: mail-fail2ban
     - role: mail-agent
