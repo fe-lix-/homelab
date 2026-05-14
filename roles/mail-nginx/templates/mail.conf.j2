@@ -2,6 +2,7 @@
 
 server {
     listen 80;
+    listen [::]:80;
     server_name {{ mail_hostname }};
     if ($host = {{ mail_hostname }}) {
         return 301 https://$host$request_uri;
@@ -12,6 +13,7 @@ server {
 server {
     # nginx on jammy is 1.18; HTTP/2 enabled via listen flag rather than http2 directive
     listen 443 ssl http2;
+    listen [::]:443 ssl http2;
     server_name {{ mail_hostname }};
 
     ssl_certificate /etc/letsencrypt/live/{{ mail_hostname }}/fullchain.pem;
