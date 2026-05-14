@@ -68,6 +68,17 @@
     {{ favicon_location() }}
 {% endmacro %}
 
+{# Mass-scanner recon for dot-files (.env, .git/*, .aws/credentials, ...). 444
+   closes the connection without a body so scanners starve of feedback. The
+   access_log stays ON intentionally — probes remain visible. /.well-known/ is
+   exempt: Authelia OIDC discovery on auth.{{ base_domain }} is load-bearing
+   (and the exemption is a no-op on hosts that don't serve well-known). #}
+{% macro block_dotfile_recon() %}
+    location ~ ^/\.(?!well-known/) {
+        return 444;
+    }
+{% endmacro %}
+
 geo $local_access {
     default 0;
     10.0.0.0/8 1;
@@ -98,6 +109,7 @@ server {
     listen {{ nginx_port }} ssl;
     server_name {{ base_domain }} homepage.{{ base_domain }};
     {{ ssl_params() }}
+    {{ block_dotfile_recon() }}
     {{ authelia_location() }}
     {{ favicon_location() }}
 
@@ -152,6 +164,7 @@ server {
     listen {{ nginx_port }} ssl;
     server_name auth.{{ base_domain }};
     {{ ssl_params() }}
+    {{ block_dotfile_recon() }}
     {{ favicon_location() }}
 
     # Rate-limit login submissions to prevent brute-force attacks
@@ -704,6 +717,8 @@ server {
     autoindex_exact_size off;
     autoindex_localtime on;
 
+    {{ block_dotfile_recon() }}
+
     location / {
         try_files $uri $uri/ =404;
     }
@@ -736,6 +751,8 @@ server {
     autoindex_exact_size off;
     autoindex_localtime on;
 
+    {{ block_dotfile_recon() }}
+
     location / {
         try_files $uri $uri/ =404;
     }
@@ -766,6 +783,7 @@ server {
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
 
+    {{ block_dotfile_recon() }}
     {{ authelia_location() }}
     {{ favicon_location() }}
 
@@ -833,6 +851,7 @@ server {
     # Vault attachments can be sizeable
     client_max_body_size 525M;
 
+    {{ block_dotfile_recon() }}
     {{ favicon_location() }}
 
     # Admin panel — LAN/VPN only (the admin token is the only auth here)
