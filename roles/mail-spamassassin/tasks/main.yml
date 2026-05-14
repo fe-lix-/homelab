@@ -1,6 +1,22 @@
 ---
-- name: Manage spamassassin daemon
+# SpamAssassin 4.x (noble) renamed the systemd unit from `spamassassin` to
+# `spamd`. Detect which exists so the role works across releases.
+- name: Discover spamd / spamassassin service name
+  ansible.builtin.shell: |
+    set -o pipefail
+    if systemctl cat spamd.service >/dev/null 2>&1; then
+      echo spamd
+    else
+      echo spamassassin
+    fi
+  args:
+    executable: /bin/bash
+  register: spamd_unit_query
+  changed_when: false
+  check_mode: false
+
+- name: Manage spam-filtering daemon
   ansible.builtin.systemd:
-    name: spamassassin
+    name: "{{ spamd_unit_query.stdout | trim }}"
     enabled: "{{ mail_spamassassin_enabled }}"
     state: "{{ 'started' if mail_spamassassin_enabled else 'stopped' }}"

@@ -22,6 +22,7 @@
   check_mode: false
   delegate_to: localhost
   become: false
+  tags: ["rdns-check"]
 
 - name: Assert rDNS matches mail_hostname
   ansible.builtin.assert:
@@ -36,6 +37,8 @@
       Vultr authoritative reverse DNS can take a few minutes to propagate
       after `set-ipv4`. Strict spam filters (M365, corporate appliances)
       downgrade outbound mail until this is fixed.
+      To bypass for a throwaway dry-run: --skip-tags rdns-check
+  tags: ["rdns-check"]
 
 - name: Install mail server packages
   ansible.builtin.apt:
