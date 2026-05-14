@@ -27,6 +27,42 @@
     proto: tcp
     src: 10.0.0.0/8
 
+# Stale "Anywhere" allow rules left over from earlier service iterations where
+# services bound directly to 0.0.0.0. Everything now binds to 127.0.0.1 and is
+# fronted by nginx on 443, so these rules are dead weight (and would become
+# attack surface if the bind address ever regressed). delete: true is
+# idempotent — no-op once the rule has been removed.
+- name: Remove stale public UFW allow rules for now-127.0.0.1 services
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    delete: true
+  loop:
+    - { port: "3000", proto: "tcp" }    # Grafana (now 127.0.0.1 → nginx)
+    - { port: "8080", proto: "tcp" }    # was qBittorrent webui (replaced; gone)
+    - { port: "8096", proto: "tcp" }    # Jellyfin (now 127.0.0.1 → nginx)
+    - { port: "8112", proto: "tcp" }    # was Deluge webui (service removed)
+    - { port: "25600", proto: "tcp" }   # was direct service (now 127.0.0.1)
+
+# Brother scanner discovery daemon (brscan-skey) listens on UDP 54925 across
+# all interfaces. Was previously "Anywhere" allow — restrict to LAN so it's
+# not internet-reachable. The bind address is a property of brscan-skey-exe
+# and can't easily be changed.
+- name: Remove stale Brother scanner UDP 54925 Anywhere allow
+  community.general.ufw:
+    rule: allow
+    port: "54925"
+    proto: udp
+    delete: true
+
+- name: Allow Brother scanner discovery (UDP 54925) from LAN only
+  community.general.ufw:
+    rule: allow
+    port: "54925"
+    proto: udp
+    src: 10.0.0.0/8
+
 - name: Enable UFW
   community.general.ufw:
     state: enabled
