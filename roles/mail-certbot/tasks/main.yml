@@ -32,6 +32,23 @@
     path: "/etc/letsencrypt/live/{{ mail_hostname }}/fullchain.pem"
   register: le_cert
 
+# Inspect public-key algorithm of the existing leaf so we can one-time-migrate
+# legacy RSA-2048 certs to ECDSA P-256. NCSC-NL flags RSA-2048 as "phase out"
+# (insufficient in a future revision). ECDSA P-256 is "Sufficient" and triggers
+# LE to chain via the E-series ECDSA intermediate (closing the R13/RSA-2048
+# intermediate finding at the same time). Empty stdout when no cert exists yet.
+- name: Detect public-key algorithm of existing leaf
+  ansible.builtin.shell: |
+    set -o pipefail
+    openssl x509 -in /etc/letsencrypt/live/{{ mail_hostname }}/cert.pem -noout -text \
+      | awk '/Public Key Algorithm:/{print $4; exit}'
+  args:
+    executable: /bin/bash
+  register: le_cert_keyalg
+  changed_when: false
+  check_mode: false
+  when: le_cert.stat.exists
+
 - name: Bootstrap cert with --standalone (fresh box, no cert yet)
   ansible.builtin.command:
     cmd: >
@@ -39,6 +56,8 @@
       --standalone
       --cert-name {{ mail_hostname }}
       -d {{ mail_hostname }}
+      --key-type ecdsa
+      --elliptic-curve secp256r1
       --agree-tos
       --email {{ certbot_email }}
       --non-interactive
@@ -71,6 +90,8 @@
       --installer nginx
       --cert-name {{ mail_hostname }}
       -d {{ mail_hostname }}
+      --key-type ecdsa
+      --elliptic-curve secp256r1
       --agree-tos
       --email {{ certbot_email }}
       --non-interactive
@@ -79,6 +100,33 @@
   register: certbot_run
   changed_when: "'no action taken' not in certbot_run.stdout"
   when: le_cert.stat.exists
+  notify:
+    - Restart postfix
+    - Restart dovecot
+
+# One-time migration: if the existing leaf is RSA, force-renew as ECDSA P-256.
+# --keep-until-expiring above would otherwise leave the cert alone for ~80 days
+# until it neared expiry. The flag combination (--key-type ecdsa
+# --force-renewal) tells certbot to discard the existing key material and
+# re-issue with the new algorithm. Becomes a no-op once the leaf is ECDSA.
+- name: Migrate legacy RSA leaf to ECDSA P-256 (one-time)
+  ansible.builtin.command:
+    cmd: >
+      certbot certonly
+      --authenticator nginx
+      --installer nginx
+      --cert-name {{ mail_hostname }}
+      -d {{ mail_hostname }}
+      --key-type ecdsa
+      --elliptic-curve secp256r1
+      --agree-tos
+      --email {{ certbot_email }}
+      --non-interactive
+      --force-renewal
+      --deploy-hook /etc/letsencrypt/renewal-hooks/deploy/reload-mail.sh
+  when:
+    - le_cert.stat.exists
+    - le_cert_keyalg.stdout | default('') == 'rsaEncryption'
   notify:
     - Restart postfix
     - Restart dovecot

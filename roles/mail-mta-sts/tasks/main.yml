@@ -80,6 +80,8 @@
     - "/etc/letsencrypt/renewal/mta-sts.{{ mail_mta_sts_domains | first }}.conf"
   when: not mta_sts_renewal.stat.exists
 
+# ECDSA P-256 leaf so internet.nl flips the cert-key-type finding green and
+# LE chains via the E-series ECDSA intermediate (replacing RSA-2048 R13).
 - name: Acquire MTA-STS cert via certbot --webroot (all SANs in one cert)
   ansible.builtin.command:
     cmd: >
@@ -88,11 +90,42 @@
       {% for d in mail_mta_sts_domains %}
       -w /var/www/mta-sts/{{ d }} -d mta-sts.{{ d }}
       {% endfor %}
+      --key-type ecdsa --elliptic-curve secp256r1
       --agree-tos --email {{ certbot_email }}
       --non-interactive --keep-until-expiring
       --deploy-hook 'systemctl reload nginx'
   register: mta_sts_certbot
   changed_when: "'no action taken' not in mta_sts_certbot.stdout and 'not yet due for renewal' not in mta_sts_certbot.stdout"
+
+# One-time migration: legacy RSA leaf → ECDSA P-256. Matches the migration in
+# roles/mail-certbot. Skipped once the cert is already ECDSA.
+- name: Detect public-key algorithm of existing MTA-STS leaf
+  ansible.builtin.shell: |
+    set -o pipefail
+    openssl x509 -in /etc/letsencrypt/live/mta-sts.{{ mail_mta_sts_domains | first }}/cert.pem -noout -text \
+      | awk '/Public Key Algorithm:/{print $4; exit}'
+  args:
+    executable: /bin/bash
+  register: mta_sts_keyalg
+  changed_when: false
+  check_mode: false
+  when: mta_sts_renewal.stat.exists
+
+- name: Migrate MTA-STS RSA leaf to ECDSA P-256 (one-time)
+  ansible.builtin.command:
+    cmd: >
+      certbot certonly --webroot
+      --cert-name mta-sts.{{ mail_mta_sts_domains | first }}
+      {% for d in mail_mta_sts_domains %}
+      -w /var/www/mta-sts/{{ d }} -d mta-sts.{{ d }}
+      {% endfor %}
+      --key-type ecdsa --elliptic-curve secp256r1
+      --agree-tos --email {{ certbot_email }}
+      --non-interactive --force-renewal
+      --deploy-hook 'systemctl reload nginx'
+  when:
+    - mta_sts_renewal.stat.exists
+    - mta_sts_keyalg.stdout | default('') == 'rsaEncryption'
 
 # Re-render the vhost so the HTTPS server blocks appear now that the
 # cert exists. The first template render before certbot would have left

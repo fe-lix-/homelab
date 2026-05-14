@@ -25,7 +25,9 @@ Companion doc to `MAIL-VPS-MIGRATION.md`. Tracks the ongoing email-deliverabilit
 | TLS protocols | ✅ TLS 1.2 + 1.3 only (SSLv2/3, TLS 1.0/1.1 disabled) | ✅ |
 | TLS 1.2 cipher policy | ✅ NCSC-NL "Sufficient" allow-list: ECDHE+AEAD only (CBC/DHE/static-RSA rejected) | ✅ |
 | TLS 1.2 signature algorithms | ✅ SHA-256/384/512 only — SHA-1 key-exchange signatures rejected (RFC 9155) | ✅ |
+| TLS cert key type | ✅ ECDSA P-256 leaf, ECDSA P-384 intermediate (E7) | ✅ same cert covers SAN |
 | TLS cert | ✅ LE, auto-renew via certbot.timer | n/a (uses mail.delval.eu's) |
+| CAA records (apex) | ⏳ user-added at Gandi: issue/issuewild/issuemail/issuevmc/iodef | ⏳ same at Cloudflare |
 | MTA-STS DNS (`_mta-sts.<domain>` TXT) | ✅ `v=STSv1; id=2026051401` | ✅ |
 | MTA-STS HTTPS policy | ✅ `mta-sts.delval.eu` (mode=enforce) | ✅ `mta-sts.quodt.eu` |
 | TLS-RPT (`_smtp._tls.<domain>` TXT) | ✅ → dmarc@delval.eu | ✅ → dmarc@quodt.eu |
