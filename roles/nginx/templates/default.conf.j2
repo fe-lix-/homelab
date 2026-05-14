@@ -79,6 +79,15 @@
     }
 {% endmacro %}
 
+{# Apply the public_global rate limit zone — burst 120 nodelay covers normal
+   page-load bursts (a fresh tab can fan out 30-50 sub-requests), throttles
+   anything sustained above 60 r/s. LAN traffic is already exempted at the
+   zone level via $rate_limit_key, so this is a no-op for internal callers. #}
+{% macro public_rate_limit() %}
+    limit_req zone=public_global burst=120 nodelay;
+    limit_req_status 429;
+{% endmacro %}
+
 geo $local_access {
     default 0;
     10.0.0.0/8 1;
@@ -88,6 +97,24 @@ geo $local_access {
 
 # Rate limiting zone for Authelia login endpoints (brute-force protection)
 limit_req_zone $binary_remote_addr zone=authelia_login:10m rate=10r/m;
+
+# Global per-IP backstop on public-facing server blocks. fail2ban bans the
+# worst offenders (nginx-444 jail, vaultwarden jail), but this is the safety
+# net for new attack patterns we haven't written a filter for yet — a single
+# IP can't burn through more than ~60 req/s sustained.
+#
+# LAN clients are exempted by zeroing out the key — nginx skips limiting when
+# limit_req_zone's key evaluates to empty (per the nginx limit_req_module
+# docs). This keeps Immich thumbnail bursts and similar high-fanout local
+# page loads from hitting 429s on the apex (which is reached on both public
+# and LAN paths via the wildcard).
+geo $rate_limit_key {
+    default        $binary_remote_addr;
+    10.0.0.0/8     "";
+    172.16.0.0/12  "";
+    192.168.0.0/16 "";
+}
+limit_req_zone $rate_limit_key zone=public_global:10m rate=60r/s;
 
 # Redirect all HTTP to HTTPS
 server {
@@ -110,6 +137,7 @@ server {
     server_name {{ base_domain }} homepage.{{ base_domain }};
     {{ ssl_params() }}
     {{ block_dotfile_recon() }}
+    {{ public_rate_limit() }}
     {{ authelia_location() }}
     {{ favicon_location() }}
 
@@ -165,6 +193,7 @@ server {
     server_name auth.{{ base_domain }};
     {{ ssl_params() }}
     {{ block_dotfile_recon() }}
+    {{ public_rate_limit() }}
     {{ favicon_location() }}
 
     # Rate-limit login submissions to prevent brute-force attacks
@@ -718,6 +747,7 @@ server {
     autoindex_localtime on;
 
     {{ block_dotfile_recon() }}
+    {{ public_rate_limit() }}
 
     location / {
         try_files $uri $uri/ =404;
@@ -752,6 +782,7 @@ server {
     autoindex_localtime on;
 
     {{ block_dotfile_recon() }}
+    {{ public_rate_limit() }}
 
     location / {
         try_files $uri $uri/ =404;
@@ -784,6 +815,7 @@ server {
     add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
 
     {{ block_dotfile_recon() }}
+    {{ public_rate_limit() }}
     {{ authelia_location() }}
     {{ favicon_location() }}
 
@@ -852,6 +884,7 @@ server {
     client_max_body_size 525M;
 
     {{ block_dotfile_recon() }}
+    {{ public_rate_limit() }}
     {{ favicon_location() }}
 
     # Admin panel — LAN/VPN only (the admin token is the only auth here)
