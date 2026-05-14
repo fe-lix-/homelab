@@ -79,3 +79,22 @@
     insertafter: '\$\{distro_id\}:\$\{distro_codename\}-security";'
     regexp: '\$\{distro_codename\}-updates";'
     line: "\t\"${distro_id}:${distro_codename}-updates\";"
+
+# Constrain TLS 1.2 signature-algorithms system-wide so the server never
+# signs the ECDHE key exchange with SHA-1 (NCSC-NL: insufficient, RFC 9155).
+# OpenSSL's default list still includes RSA+SHA1 for legacy compat — flagged
+# by internet.nl on the receiving MX. The LE cert is RSA-SHA256, so all
+# entries below are usable; TLS 1.3 ignores this list entirely (it uses
+# signature_algorithms_cert / signature schemes).
+# Affects every OpenSSL user on the host (Postfix, Dovecot, nginx, certbot).
+# Safe on a dedicated mail VPS: every realistic peer offers SHA-256+ already.
+- name: Constrain TLS signature algorithms in system OpenSSL config
+  ansible.builtin.lineinfile:
+    path: /etc/ssl/openssl.cnf
+    insertafter: '^CipherString\s*=\s*DEFAULT:@SECLEVEL='
+    regexp: '^SignatureAlgorithms\s*='
+    # yamllint disable-line rule:line-length
+    line: "SignatureAlgorithms = ECDSA+SHA512:ECDSA+SHA384:ECDSA+SHA256:RSA-PSS+SHA512:RSA-PSS+SHA384:RSA-PSS+SHA256:RSA+SHA512:RSA+SHA384:RSA+SHA256:ed25519:ed448"
+  notify:
+    - Restart postfix (mail-base TLS policy)
+    - Restart dovecot (mail-base TLS policy)

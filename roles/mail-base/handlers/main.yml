@@ -1,0 +1,20 @@
+---
+# These handlers exist so the system OpenSSL config change in tasks/main.yml
+# triggers a service restart on idempotent re-runs. On a fresh-VPS bootstrap
+# postfix/dovecot are not installed yet when these fire — failed_when: false
+# tolerates "Unit not loaded" without masking real restart failures (those
+# would also report rc != 0 with a different stderr). The roles' own
+# handlers ("Restart postfix" / "Restart dovecot") fire later for their own
+# template changes, so first-deploy correctness is unaffected.
+
+- name: Restart postfix (mail-base TLS policy)
+  ansible.builtin.systemd:
+    name: postfix
+    state: restarted
+  failed_when: false
+
+- name: Restart dovecot (mail-base TLS policy)
+  ansible.builtin.systemd:
+    name: dovecot
+    state: restarted
+  failed_when: false
