@@ -1,0 +1,49 @@
+---
+# fail2ban watches the systemd journal for known-bad signatures (SSH brute
+# force, Vaultwarden failed logins, nginx recon-probe 444s) and bans the
+# offending IP via UFW. Runs after nginx so the nginx container is already up
+# (and emitting journald logs) by the time the nginx-444 jail starts watching.
+
+# python3-systemd is the binding fail2ban's systemd backend uses for
+# reading journald; the apt fail2ban package doesn't pull it in transitively.
+- name: Install fail2ban + python3-systemd
+  ansible.builtin.apt:
+    name:
+      - fail2ban
+      - python3-systemd
+    state: present
+    update_cache: true
+    cache_valid_time: 3600
+
+- name: Deploy custom filter for Vaultwarden failed logins
+  ansible.builtin.copy:
+    src: filter.d/vaultwarden.conf
+    dest: /etc/fail2ban/filter.d/vaultwarden.conf
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart fail2ban
+
+- name: Deploy custom filter for nginx 444 recon
+  ansible.builtin.copy:
+    src: filter.d/nginx-444.conf
+    dest: /etc/fail2ban/filter.d/nginx-444.conf
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart fail2ban
+
+- name: Deploy jail.local
+  ansible.builtin.template:
+    src: jail.local.j2
+    dest: /etc/fail2ban/jail.local
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart fail2ban
+
+- name: Ensure fail2ban is enabled and running
+  ansible.builtin.systemd:
+    name: fail2ban
+    enabled: true
+    state: started

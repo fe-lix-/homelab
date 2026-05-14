@@ -15,3 +15,9 @@ services:
       - "/srv/games:/srv/games:ro"
     environment:
       TZ: "{{ timezone }}"
+    # journald log driver makes container stdout queryable via `journalctl
+    # CONTAINER_NAME=nginx`, which fail2ban watches for 444/recon patterns.
+    # docker logs nginx + Loki ingestion via the Docker socket still work
+    # (Docker abstracts the underlying driver for both).
+    logging:
+      driver: journald

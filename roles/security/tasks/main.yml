@@ -78,8 +78,3 @@
     - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication {{ ssh_password_authentication }}' }
     - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
   notify: Restart sshd
-
-- name: Remove fail2ban
-  ansible.builtin.apt:
-    name: fail2ban
-    state: absent

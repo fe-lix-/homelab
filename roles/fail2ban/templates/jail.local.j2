@@ -1,0 +1,45 @@
+# Managed by Ansible — do not edit by hand. Edits get overwritten by
+# `make deploy-role ROLE=fail2ban`.
+#
+# Backend: systemd. All jails read the host's journald. The Docker containers
+# we care about (nginx, vaultwarden) ship with `logging: driver: journald` in
+# their compose files, so their stdout flows into journald with a
+# CONTAINER_NAME=<name> field that we match on per-jail.
+
+[DEFAULT]
+bantime  = {{ fail2ban_bantime }}
+findtime = {{ fail2ban_findtime }}
+maxretry = {{ fail2ban_maxretry }}
+backend  = systemd
+banaction = {{ fail2ban_banaction }}
+# Whitelist localhost + LAN so we never lock ourselves out.
+ignoreip = 127.0.0.1/8 ::1 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+
+# SSH is key-only on this host (PasswordAuthentication no), so brute force is
+# already infeasible. We still enable the jail to keep failed-auth noise out
+# of journald and to ban scanners that probe the SSH banner.
+[sshd]
+enabled = true
+mode    = aggressive
+backend = systemd
+
+# Vaultwarden's API logs failed master-password attempts with the real client
+# IP (X-Real-IP forwarded by nginx). 5 fails in 10 min → 1h ban.
+[vaultwarden]
+enabled = true
+filter  = vaultwarden
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=docker.service + CONTAINER_NAME=vaultwarden
+
+# nginx 444 responses come only from the block_dotfile_recon() macro firing on
+# /. URIs (.env, .git/config, .aws/credentials, ...). A legitimate user never
+# sees a 444 from this nginx config — every 444 is a scanner. Short bantime
+# is more aggressive because the signal-to-noise is much higher than for ssh.
+[nginx-444]
+enabled = true
+filter  = nginx-444
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=docker.service + CONTAINER_NAME=nginx
+maxretry = 3
+findtime = 5m
+bantime  = 24h

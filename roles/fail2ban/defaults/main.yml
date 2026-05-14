@@ -1,0 +1,9 @@
+---
+# Global defaults applied to every jail unless the jail overrides them.
+# bantime/findtime use fail2ban's time-shorthand (s, m, h, d, w).
+fail2ban_bantime: "1h"
+fail2ban_findtime: "10m"
+fail2ban_maxretry: 5
+# UFW is the existing firewall on this host; banaction = ufw inserts deny
+# rules at position 1 so they take precedence over the standard allow set.
+fail2ban_banaction: "ufw"

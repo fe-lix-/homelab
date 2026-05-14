@@ -17,3 +17,8 @@ services:
       IP_HEADER: "X-Real-IP"
       ROCKET_PORT: "80"
       ROCKET_ADDRESS: "0.0.0.0"
+    # Required so fail2ban can watch `journalctl CONTAINER_NAME=vaultwarden`
+    # for failed-login events. docker logs vaultwarden + Loki ingestion still
+    # work normally (Docker abstracts the driver for both paths).
+    logging:
+      driver: journald
