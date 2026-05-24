@@ -123,6 +123,10 @@
         icon: pi-hole.png
         href: "https://pihole.{{ base_domain }}/admin"
         description: DNS ad blocker
+    - mitmproxy:
+        icon: si-mitmproxy
+        href: "https://mitm.{{ base_domain }}"
+        description: "HTTP traffic discovery proxy ({{ ansible_host }}:{{ mitmproxy_proxy_port }})"
     - UniFi:
         icon: ubiquiti.png
         href: "https://unifi.{{ base_domain }}"

@@ -25,6 +25,7 @@ backup_paths:
   - /opt/goploader/config
   - /opt/goploader/data
   - /opt/uptime-kuma/data
+  - /opt/mitmproxy/data
   - /opt/authelia/config
   - /opt/authelia/data
   - /opt/lldap/data

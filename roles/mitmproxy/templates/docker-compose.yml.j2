@@ -1,0 +1,22 @@
+---
+services:
+  mitmproxy:
+    image: mitmproxy/mitmproxy:{{ mitmproxy_version }}
+    container_name: mitmproxy
+    restart: unless-stopped
+    command: >
+      mitmweb
+      --listen-host 0.0.0.0
+      --listen-port 8118
+      --web-host 0.0.0.0
+      --web-port 8081
+      --set confdir=/home/mitmproxy/.mitmproxy
+      --set web_open_browser=false
+      --set web_password={{ mitmproxy_web_password }}
+    ports:
+      - "{{ ansible_host }}:{{ mitmproxy_proxy_port }}:8118"
+      - "127.0.0.1:{{ mitmproxy_ui_port }}:8081"
+    volumes:
+      - "{{ mitmproxy_data_dir }}/data:/home/mitmproxy/.mitmproxy"
+    environment:
+      TZ: "{{ timezone }}"

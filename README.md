@@ -27,6 +27,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Paperless-ngx | Document management & OCR | `docs.homelab.example.com` |
 | Uptime Kuma | Uptime monitoring | `uptime.homelab.example.com` |
 | Pi-hole | DNS ad blocker | `pihole.homelab.example.com` |
+| mitmproxy | HTTP traffic discovery proxy (LAN proxy on `<host>:8118`, mitmweb UI behind Authelia admin) | `mitm.homelab.example.com` |
 | Minecraft | PaperMC 1.20.4 (offline mode, LAN only) | `YOUR_SERVER_IP:25565` (direct TCP, UFW-restricted to 10.0.0.0/8) |
 | Homepage | Dashboard | `homelab.example.com` |
 | manga-scheduler | Drip-feeds manga from `/srv/uploads/mangas` into Komga library every 2 days (systemd timer) | — |

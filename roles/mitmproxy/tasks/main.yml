@@ -1,0 +1,28 @@
+---
+- name: Create mitmproxy directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ mitmproxy_data_dir }}"
+
+- name: Create mitmproxy data directory (owned by container UID)
+  ansible.builtin.file:
+    path: "{{ mitmproxy_data_dir }}/data"
+    state: directory
+    owner: "1000"
+    group: "1000"
+    mode: "0755"
+
+- name: Deploy mitmproxy docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ mitmproxy_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart mitmproxy
+
+- name: Start mitmproxy
+  community.docker.docker_compose_v2:
+    project_src: "{{ mitmproxy_data_dir }}"
+    state: present

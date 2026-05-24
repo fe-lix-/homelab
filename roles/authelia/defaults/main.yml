@@ -1,5 +1,5 @@
 ---
-authelia_version: "4.39.16"
+authelia_version: "4.39.19"
 authelia_redis_version: "7.4-alpine"
 authelia_port: 9091
 authelia_data_dir: /opt/authelia

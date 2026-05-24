@@ -1,0 +1,9 @@
+---
+mitmproxy_version: "latest"
+mitmproxy_proxy_port: 8118
+mitmproxy_ui_port: 8081
+mitmproxy_data_dir: /opt/mitmproxy
+
+# mitmweb's built-in auth — redundant with the Authelia admin gate on
+# mitm.{{ base_domain }}, but mitmweb 11+ requires it. Not a real secret.
+mitmproxy_web_password: mitmproxy

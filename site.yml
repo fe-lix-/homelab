@@ -40,6 +40,8 @@
       tags: mediathekarr
     - role: joynarr
       tags: joynarr
+    - role: mitmproxy
+      tags: mitmproxy
     - role: uptime-kuma
       tags: uptime-kuma
     - role: immich

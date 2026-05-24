@@ -1,5 +1,5 @@
 ---
-uptime_kuma_version: "2.2.1"
+uptime_kuma_version: "2.3.2"
 uptime_kuma_port: 3001
 uptime_kuma_data_dir: /opt/uptime-kuma
 uptime_kuma_api_url: "http://127.0.0.1:{{ uptime_kuma_port }}"
@@ -50,6 +50,8 @@ uptime_kuma_monitors:
     url: "http://host-gateway:{{ authelia_port }}"
   - name: Pi-hole
     url: "http://host-gateway:{{ pihole_port }}/admin"
+  - name: mitmproxy
+    url: "http://host-gateway:{{ mitmproxy_ui_port }}"
   - name: Screen Time
     url: "http://host-gateway:{{ screentime_port }}/health"
   - name: UniFi
