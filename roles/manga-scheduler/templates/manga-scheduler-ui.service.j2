@@ -7,6 +7,9 @@ Type=simple
 ExecStart=/usr/bin/python3 {{ manga_scheduler_data_dir }}/manga-scheduler-ui.py
 Restart=on-failure
 RestartSec=5
+# Playwright browsers live in the data dir (ReadWritePaths), not /root/.cache —
+# ProtectHome=yes hides /root from the downloader child process spawned here.
+Environment=PLAYWRIGHT_BROWSERS_PATH={{ manga_scheduler_data_dir }}/ms-playwright
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true

@@ -21,10 +21,15 @@ from pathlib import Path
 
 import random
 
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from playwright.sync_api import (
+    sync_playwright,
+    TimeoutError as PlaywrightTimeout,
+    Error as PlaywrightError,
+)
 
 BYPARR_URL = "http://127.0.0.1:{{ byparr_port }}/v1"
 BYPARR_TIMEOUT = 120000  # ms
+BYPARR_RETRIES = 3  # ByParr 500s on transient `networkidle` timeouts; retry before giving up
 STAGING_DIR = Path("{{ manga_downloader_staging_dir }}")
 UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
 COMICS_DIR = Path("{{ manga_scheduler_comics_dir }}")
@@ -41,6 +46,11 @@ COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
 OUO_LINK_RE = re.compile(r'href=["\']?(https://ouo\.io/[A-Za-z0-9]+)["\']?')
 SLUG_CLEANUP_RE = re.compile(r"-(?:completo|complete|full)$", re.IGNORECASE)
 OUO_TIMEOUT = 60000  # ms — max time to wait for ouo.io redirect
+OUO_RETRIES = 3  # ouo.io ad redirects are flaky; retry resolution with a fresh session
+# The ouo.io flow legitimately ends at the file host. Anything else (google.com,
+# other ad/search sponsors) is a hijack and must not be treated as the destination.
+DEST_HOST_HINTS = ("fireload",)
+DEST_EXT_HINTS = (".rar", ".zip", ".cbz", ".cbr", ".pdf", ".7z")
 
 
 # --- Status management ---
@@ -84,28 +94,36 @@ def byparr_request(url: str, max_timeout: int = BYPARR_TIMEOUT) -> dict:
         "url": url,
         "maxTimeout": max_timeout,
     }).encode()
-    req = urllib.request.Request(
-        BYPARR_URL,
-        data=payload,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=max_timeout // 1000 + 30) as resp:
-            data = json.loads(resp.read())
-    except urllib.error.HTTPError as e:
-        body = ""
+    last_err = None
+    for attempt in range(1, BYPARR_RETRIES + 1):
+        req = urllib.request.Request(
+            BYPARR_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
         try:
-            body = e.read().decode()[:500]
-        except Exception:
-            pass
-        raise RuntimeError(f"ByParr HTTP {e.code} for {url}: {body}") from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"ByParr connection error for {url}: {e.reason}") from e
-    if data.get("status") != "ok":
-        raise RuntimeError(f"ByParr error for {url}: {data.get('message', 'unknown')}")
-    solution = data["solution"]
-    log(f"ByParr response: status={solution.get('status')}, final_url={solution.get('url', url)[:80]}")
-    return solution
+            with urllib.request.urlopen(req, timeout=max_timeout // 1000 + 30) as resp:
+                data = json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            body = ""
+            try:
+                body = e.read().decode()[:500]
+            except Exception:
+                pass
+            last_err = RuntimeError(f"ByParr HTTP {e.code} for {url}: {body}")
+        except urllib.error.URLError as e:
+            last_err = RuntimeError(f"ByParr connection error for {url}: {e.reason}")
+        else:
+            if data.get("status") != "ok":
+                raise RuntimeError(f"ByParr error for {url}: {data.get('message', 'unknown')}")
+            solution = data["solution"]
+            log(f"ByParr response: status={solution.get('status')}, final_url={solution.get('url', url)[:80]}")
+            return solution
+        if attempt < BYPARR_RETRIES:
+            backoff = 5 * attempt
+            log(f"ByParr attempt {attempt}/{BYPARR_RETRIES} failed ({last_err}); retrying in {backoff}s")
+            time.sleep(backoff)
+    raise last_err
 
 
 def byparr_html(url: str, max_timeout: int = BYPARR_TIMEOUT) -> tuple[str, str]:
@@ -147,6 +165,19 @@ def _is_ouo_domain(url: str) -> bool:
         return False
 
 
+def _is_valid_destination(url: str) -> bool:
+    """True if `url` looks like the real download target rather than an ad/search
+    redirect. ouo.io frequently bounces clicks to google.com and other sponsors;
+    those must not be handed to the Fireload downloader as the resolved link."""
+    if _is_ouo_domain(url):
+        return False
+    host = (urllib.parse.urlparse(url).hostname or "").lower()
+    if any(h in host for h in DEST_HOST_HINTS):
+        return True
+    path = url.lower().split("?", 1)[0]
+    return any(path.endswith(ext) for ext in DEST_EXT_HINTS)
+
+
 def _ouo_remove_overlays_and_click(page) -> bool:
     """Remove overlay iframes, find a button/form, and click it. Return True if clicked."""
     # Dump debug info on first call
@@ -158,26 +189,32 @@ def _ouo_remove_overlays_and_click(page) -> bool:
     except Exception as e:
         log(f"Debug dump failed: {e}")
 
-    # Remove ALL iframes and overlay divs that intercept pointer events
-    removed = page.evaluate("""
-        (() => {
-            let count = 0;
-            // Remove all iframes (ouo.io uses them as overlays)
-            document.querySelectorAll('iframe').forEach(el => { el.remove(); count++; });
-            // Remove divs with data-shb attribute (known overlay container)
-            document.querySelectorAll('div[data-shb]').forEach(el => { el.remove(); count++; });
-            // Remove any fixed/absolute positioned overlays covering the page
-            document.querySelectorAll('div').forEach(el => {
-                const style = window.getComputedStyle(el);
-                if ((style.position === 'fixed' || style.position === 'absolute') &&
-                    parseInt(style.zIndex) > 100 &&
-                    el.offsetWidth > 500 && el.offsetHeight > 300) {
-                    el.remove(); count++;
-                }
-            });
-            return count;
-        })()
-    """)
+    # Remove ALL iframes and overlay divs that intercept pointer events.
+    # The page may navigate (ad/countdown redirect) mid-evaluate, destroying the
+    # execution context — treat that as "the page already moved on" and bail.
+    try:
+        removed = page.evaluate("""
+            (() => {
+                let count = 0;
+                // Remove all iframes (ouo.io uses them as overlays)
+                document.querySelectorAll('iframe').forEach(el => { el.remove(); count++; });
+                // Remove divs with data-shb attribute (known overlay container)
+                document.querySelectorAll('div[data-shb]').forEach(el => { el.remove(); count++; });
+                // Remove any fixed/absolute positioned overlays covering the page
+                document.querySelectorAll('div').forEach(el => {
+                    const style = window.getComputedStyle(el);
+                    if ((style.position === 'fixed' || style.position === 'absolute') &&
+                        parseInt(style.zIndex) > 100 &&
+                        el.offsetWidth > 500 && el.offsetHeight > 300) {
+                        el.remove(); count++;
+                    }
+                });
+                return count;
+            })()
+        """)
+    except PlaywrightError as e:
+        log(f"Overlay removal skipped (page navigated): {e}")
+        return False
     log(f"Removed {removed} overlay element(s)")
     time.sleep(0.5)
 
@@ -206,14 +243,28 @@ def _ouo_remove_overlays_and_click(page) -> bool:
         except PlaywrightTimeout:
             continue
 
-    # Fallback: JS form submit
-    submitted = page.evaluate("""
-        (() => { const f = document.querySelector('form');
-                 if (f) { f.submit(); return true; }
-                 return false; })()
-    """)
+    # Fallback: JS form submit — but ONLY for a form that stays on ouo. A bare
+    # document.querySelector('form').submit() will happily submit an ad page's
+    # Google search box, navigating to google.com/webhp (a dead-end hijack).
+    try:
+        submitted = page.evaluate("""
+            (() => {
+                for (const f of document.querySelectorAll('form')) {
+                    const action = (f.getAttribute('action') || '').toLowerCase();
+                    if (action === '' || action.startsWith('/') ||
+                        action.startsWith('#') || action.includes('ouo.')) {
+                        f.submit();
+                        return true;
+                    }
+                }
+                return false;
+            })()
+        """)
+    except PlaywrightError as e:
+        log(f"Form submit skipped (page navigated): {e}")
+        return False
     if submitted:
-        log("Submitted form via JS (fallback)")
+        log("Submitted ouo form via JS (fallback)")
         return True
 
     return False
@@ -246,8 +297,12 @@ def resolve_ouo_link(ouo_url: str) -> str:
                 log(f"Step {step + 1}: at {current}")
 
                 if not _is_ouo_domain(current):
-                    log(f"Resolved to: {current}")
-                    return current
+                    if _is_valid_destination(current):
+                        log(f"Resolved to: {current}")
+                        return current
+                    # Left ouo for an ad/search page (e.g. google.com) — this
+                    # attempt is hijacked; abort so the caller can retry fresh.
+                    raise RuntimeError(f"ouo.io redirected to non-download page: {current}")
 
                 # Simulate random mouse movements
                 for _ in range(random.randint(3, 5)):
@@ -277,7 +332,7 @@ def resolve_ouo_link(ouo_url: str) -> str:
 
             # If we exhausted steps, check where we ended up
             final_url = page.url
-            if not _is_ouo_domain(final_url):
+            if _is_valid_destination(final_url):
                 log(f"Resolved to: {final_url}")
                 return final_url
 
@@ -1343,8 +1398,20 @@ def main():
             try:
                 cleanup_staging()
 
-                # Resolve ouo.io -> Fireload URL
-                fireload_url = resolve_ouo_link(ouo_url)
+                # Resolve ouo.io -> Fireload URL. ouo's ad redirects are flaky and
+                # sometimes hijack the click to google.com; retry with a fresh
+                # browser session before giving up on the volume.
+                fireload_url = None
+                for attempt in range(1, OUO_RETRIES + 1):
+                    try:
+                        fireload_url = resolve_ouo_link(ouo_url)
+                        break
+                    except (RuntimeError, PlaywrightError) as e:
+                        log(f"{vol_label}: ouo resolution attempt {attempt}/{OUO_RETRIES} failed: {e}")
+                        if attempt < OUO_RETRIES:
+                            time.sleep(5)
+                        else:
+                            raise
                 volumes[i]["name"] = f"Volume {i+1}"
                 update_status(current=f"Downloading {vol_label}", volumes=volumes)
 

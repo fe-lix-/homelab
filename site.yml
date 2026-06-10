@@ -68,6 +68,8 @@
       tags: pihole
     - role: minecraft
       tags: minecraft
+    - role: junimoserver
+      tags: junimoserver
     - role: manga-scheduler
       tags: manga-scheduler
     - role: ntfy

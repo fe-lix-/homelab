@@ -23,6 +23,10 @@
 - name: Install Playwright Chromium browser
   ansible.builtin.command:
     cmd: "{{ manga_scheduler_data_dir }}/venv/bin/playwright install --with-deps chromium"
+  environment:
+    # Install into the service's own data dir, not /root/.cache. The downloader
+    # runs under the UI service's ProtectHome=yes sandbox, which hides /root.
+    PLAYWRIGHT_BROWSERS_PATH: "{{ manga_scheduler_data_dir }}/ms-playwright"
   register: playwright_install
   changed_when: "'downloaded' in playwright_install.stdout.lower()"
 

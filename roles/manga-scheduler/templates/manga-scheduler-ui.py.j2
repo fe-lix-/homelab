@@ -770,13 +770,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
         PENDING_FILE.write_text(series)
         TRIGGER_USER_FILE.write_text(user)
 
-        result = subprocess.run(
-            ["systemctl", "start", "manga-scheduler.service"],
-            capture_output=True, text=True, timeout=120
-        )
+        # Fire-and-forget: `systemctl start` on a Type=oneshot blocks until the
+        # job FINISHES. A large batch takes well over 120s, so a synchronous call
+        # raised TimeoutExpired and showed a false error even though the delivery
+        # completed in the background. --no-block just enqueues the job and
+        # returns immediately; results show up in Komga once the batch finishes.
+        try:
+            result = subprocess.run(
+                ["systemctl", "start", "--no-block", "manga-scheduler.service"],
+                capture_output=True, text=True, timeout=15,
+            )
+        except subprocess.SubprocessError as e:
+            if PENDING_FILE.exists():
+                PENDING_FILE.unlink()
+            self.send_redirect("/?msg=" + urllib.parse.quote("Failed to start delivery: " + str(e)) + "&err=1")
+            return
 
         if result.returncode == 0:
-            self.send_redirect("/?msg=" + urllib.parse.quote("Delivered: " + series))
+            self.send_redirect("/?msg=" + urllib.parse.quote(
+                "Delivery started: " + series + " — will appear in Komga shortly"))
         else:
             if PENDING_FILE.exists():
                 PENDING_FILE.unlink()
@@ -817,7 +829,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    server = http.server.HTTPServer(("127.0.0.1", PORT), Handler)
+    # ThreadingHTTPServer (not HTTPServer): the single-threaded server froze the
+    # whole UI whenever one request blocked — e.g. sendall() to a client that
+    # stalled without closing the connection. Each request now runs in its own
+    # daemon thread, and Handler.timeout bounds stalled reads/writes so a dead
+    # connection can't leak a thread forever.
+    Handler.timeout = 60
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    server.daemon_threads = True
     print("Manga Scheduler UI listening on 127.0.0.1:" + str(PORT))
     server.serve_forever()
 {% endraw %}

@@ -322,6 +322,14 @@ access_control:
         - "group:photo"
         - "group:admin"
 
+    # Stardew Valley (JunimoServer noVNC admin UI)
+    - domain:
+        - "stardew.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:stardew"
+        - "group:admin"
+
     # Minecraft IP whitelist portal
     - domain: "{{ base_domain }}"
       resources:

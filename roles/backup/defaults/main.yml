@@ -38,6 +38,9 @@ backup_paths:
   - /srv/paperless
   - /opt/pihole/config
   - /opt/minecraft/data
+  - /opt/junimoserver/saves
+  - /opt/junimoserver/settings
+  - /opt/junimoserver/steam-session
   - /opt/ntfy/config
   - /opt/ntfy/data
   - /opt/vaultwarden/data
