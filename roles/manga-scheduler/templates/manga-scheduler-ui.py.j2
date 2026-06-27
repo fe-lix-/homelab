@@ -5,6 +5,7 @@ import datetime
 import http.server
 import json
 import re
+import shutil
 import subprocess
 import urllib.parse
 import zipfile
@@ -330,6 +331,10 @@ tr.next td { background: #1e1e3f; }
 button, .btn { background: #7c3aed; color: white; border: none; padding: 0.4rem 0.9rem; border-radius: 4px; cursor: pointer; font-size: 0.85rem; }
 button:hover, .btn:hover { background: #6d28d9; }
 button:disabled { opacity: 0.5; cursor: default; }
+button.danger { background: #b91c1c; }
+button.danger:hover { background: #991b1b; }
+td.actions { display: flex; gap: 0.4rem; }
+td.actions form { margin: 0; }
 .retry-btn { background: #b45309; font-size: 0.78rem; padding: 0.25rem 0.6rem; }
 .retry-btn:hover { background: #92400e; }
 
@@ -450,10 +455,14 @@ def render_delivery(msg: str = "", error: bool = False) -> str:
             f"<td>{len(files)}</td>"
             f"<td>{'%.1f' % total_mb} MB</td>"
             f"<td>{is_next}</td>"
-            "<td>"
+            "<td class='actions'>"
             f"<form method='post' action='/deliver' onsubmit=\"return confirm('Deliver now: {safe_name}?')\">"
             f"<input type='hidden' name='series' value='{safe_name}'>"
             "<button type='submit'>Deliver Now</button>"
+            "</form>"
+            f"<form method='post' action='/delete-series' onsubmit=\"return confirm('Delete \\'{safe_name}\\' ({len(files)} file(s)) from the upload queue? This cannot be undone.')\">"
+            f"<input type='hidden' name='series' value='{safe_name}'>"
+            "<button type='submit' class='danger'>Delete</button>"
             "</form>"
             "</td>"
             "</tr>"
@@ -512,7 +521,7 @@ def render_download(msg: str = "", error: bool = False) -> str:
             "<div class='section'><h2>New Download</h2>"
             "<form class='dl-form' method='post' action='/download'>"
             "<div><label>URL</label><br>"
-            "<input type='text' name='url' placeholder='https://tomosmanga.com/... or https://sushiscan.net/...' required></div>"
+            "<input type='text' name='url' placeholder='tomosmanga / sushiscan / manhwa-latino / mangolibreria URL' required></div>"
             "<div><label>Series name (optional)</label><br>"
             "<input type='text' name='series' placeholder='Auto-detect'></div>"
             "<button type='submit'>Start Download</button>"
@@ -754,6 +763,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_download(params)
         elif self.path == "/deliver":
             self._handle_deliver(params)
+        elif self.path == "/delete-series":
+            self._handle_delete_series(params)
         elif self.path == "/schedule":
             self._handle_schedule(params)
         else:
@@ -794,13 +805,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 PENDING_FILE.unlink()
             self.send_redirect("/?msg=" + urllib.parse.quote("Failed: " + result.stderr.strip()) + "&err=1")
 
+    def _handle_delete_series(self, params: dict):
+        series = params.get("series", [""])[0].strip()
+        if not series:
+            self.send_redirect("/?msg=No+series+specified&err=1")
+            return
+
+        # Resolve via discover_series so we only ever delete real paths under
+        # UPLOAD_DIR (guards against path traversal / arbitrary names).
+        series_map = discover_series()
+        if series not in series_map:
+            self.send_redirect("/?msg=" + urllib.parse.quote("Series not found: " + series) + "&err=1")
+            return
+
+        try:
+            target_dir = UPLOAD_DIR / series
+            if target_dir.is_dir() and target_dir.resolve().parent == UPLOAD_DIR.resolve():
+                shutil.rmtree(target_dir)
+            else:
+                for f in series_map[series]:
+                    if f.is_file() and f.resolve().parent == UPLOAD_DIR.resolve():
+                        f.unlink()
+        except OSError as e:
+            self.send_redirect("/?msg=" + urllib.parse.quote("Delete failed: " + str(e)) + "&err=1")
+            return
+
+        # Drop it from the schedule's active list if present (harmless if absent).
+        active = load_schedule()
+        if series in active:
+            save_schedule([s for s in active if s != series])
+
+        self.send_redirect("/?msg=" + urllib.parse.quote("Deleted from upload queue: " + series))
+
     def _handle_download(self, params: dict):
         url = params.get("url", [""])[0].strip()
         series = params.get("series", [""])[0].strip()
 
-        allowed = ("https://tomosmanga.com/", "https://sushiscan.net/")
+        allowed = ("https://tomosmanga.com/", "https://sushiscan.net/", "https://manhwa-latino.com/", "https://mangolibreria.com/")
         if not url or not any(url.startswith(d) for d in allowed):
-            self.send_redirect("/download-page?msg=" + urllib.parse.quote("Invalid URL: must be from tomosmanga.com or sushiscan.net") + "&err=1")
+            self.send_redirect("/download-page?msg=" + urllib.parse.quote("Invalid URL: must be from tomosmanga.com, sushiscan.net, manhwa-latino.com, or mangolibreria.com") + "&err=1")
             return
 
         if is_download_running():

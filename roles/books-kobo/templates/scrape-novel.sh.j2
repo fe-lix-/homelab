@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Scrape a light novel into per-volume EPUBs in {{ books_source_dir }}.
+# Cloudflare-protected sites are fetched via ByParr. Output EPUBs are picked up
+# by the kepubify timer (or run it now: systemctl start kepubify-converter).
+#
+# Usage: scrape-novel.sh <product-url> [volume-spec] [series-title]
+#   scrape-novel.sh "https://novelasligeras.net/index.php/producto/<slug>/" 1-7 "Honzuki no Gekokujou (Novela)"
+#   scrape-novel.sh "https://novelasligeras.net/.../<slug>/"            # all volumes, site title
+set -euo pipefail
+
+URL="${1:?usage: scrape-novel.sh <product-url> [volume-spec e.g. 1-7] [series-title]}"
+VOLS="${2:-}"
+TITLE="${3:-}"
+
+exec docker run --rm --network host \
+  -v {{ books_source_dir }}:/out \
+  -v {{ books_data_dir }}/novel-scraper.py:/s.py:ro \
+  --entrypoint python "{{ books_scraper_image }}" \
+  /s.py --url "$URL" ${VOLS:+--volumes "$VOLS"} ${TITLE:+--title "$TITLE"} --out /out

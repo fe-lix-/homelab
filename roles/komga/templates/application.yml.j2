@@ -15,3 +15,10 @@ spring:
           authelia:
             issuer-uri: "https://auth.{{ base_domain }}"
             user-name-attribute: preferred_username
+
+komga:
+  # Filesystem watching doesn't reliably catch the KEPUBs the kcc-converter
+  # writes to /data-kobo, so rescan hourly (+ on startup) to keep the Kobo
+  # library current without manual "Scan library files" clicks.
+  libraries-scan-cron: "0 0 * * * ?"
+  libraries-scan-startup: true

@@ -1,0 +1,13 @@
+---
+calibre_web_version: "v4.0.6"
+calibre_web_port: 8083
+calibre_web_data_dir: /opt/calibre-web
+calibre_web_library_dir: /srv/media/ebooks
+# CWA force-chowns the ingest mount to its PUID:PGID and 0755 on every start, so
+# it can't live under a Samba-managed /srv dir — keep it container-owned in /opt.
+calibre_web_ingest_dir: /opt/calibre-web/ingest
+calibre_web_user: svc-media
+# Run with the shared media-rw group (not svc-media's private group) so CWA's
+# chown of the library matches the storage role's svc-media:media-rw and doesn't
+# fight it on every deploy.
+calibre_web_group: media-rw

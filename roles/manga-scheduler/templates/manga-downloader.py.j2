@@ -508,7 +508,9 @@ def _urllib_download(url: str, dest_dir: Path) -> Path:
 
 
 def extract_archive(archive_path: Path, dest_dir: Path) -> list[Path]:
-    """Extract an archive with 7z and return comic files found."""
+    """Extract an archive and return comic files found. Uses 7z; RAR archives
+    whose entries use a compression method 7z can't decode without the non-free
+    codec fail with "Unsupported Method", so fall back to unrar for those."""
     log(f"Extracting: {archive_path.name}")
     dest_dir.mkdir(parents=True, exist_ok=True)
     result = subprocess.run(
@@ -516,7 +518,13 @@ def extract_archive(archive_path: Path, dest_dir: Path) -> list[Path]:
         capture_output=True, text=True, timeout=600,
     )
     if result.returncode != 0:
-        raise RuntimeError(f"7z extraction failed: {result.stderr.strip()}")
+        log(f"  7z failed ({result.stderr.strip()[-120:]}); retrying with unrar")
+        result = subprocess.run(
+            ["unrar", "x", "-o+", "-y", str(archive_path), f"{dest_dir}/"],
+            capture_output=True, text=True, timeout=600,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"extraction failed (7z and unrar): {result.stderr.strip()}")
     comic_files = []
     for root, _dirs, files in os.walk(dest_dir):
         for f in files:
@@ -1287,11 +1295,559 @@ def run_sushiscan_pipeline(args, series: str, started: str, prev_status):
         })
 
 
+# --- manhwa-latino.com pipeline (Madara theme; Cloudflare on pages via ByParr,
+# image CDN needs only a Referer) ---
+
+# Chapter links on a Madara series page: /manga/<slug>/capitulo-<n>/
+MANHWALATINO_CHAPTER_RE = re.compile(
+    r'href="(https://manhwa-latino\.com/manga/[^"/]+/capitulo-([\d.]+)/)"'
+)
+# Reader page chapter images carry class "wp-manga-chapter-img"; the real URL is
+# on a separate CDN and may have leading/trailing whitespace inside the quotes.
+MANHWALATINO_IMG_RE = re.compile(
+    r'<img[^>]*\bwp-manga-chapter-img\b[^>]*?\bsrc=["\']\s*([^"\']+?)\s*["\']',
+    re.IGNORECASE,
+)
+MANHWALATINO_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0"
+)
+
+
+def _chapter_sort_key(num_str: str):
+    nums = re.findall(r"\d+(?:\.\d+)?", num_str)
+    return [float(n) for n in nums] if nums else [0.0]
+
+
+def manhwalatino_series_name_from_url(url: str) -> str:
+    """Derive a series name from a manhwa-latino /manga/<slug>/ URL."""
+    parts = urllib.parse.urlparse(url).path.strip("/").split("/")
+    slug = parts[-1] if parts and parts[-1] else (parts[-2] if len(parts) > 1 else "")
+    slug = SLUG_CLEANUP_RE.sub("", slug)
+    return slug.replace("-", " ").title()
+
+
+def manhwalatino_parse_entries(html: str) -> list[dict]:
+    """Parse the chapter list from a series page. Returns [{name, number, url}]
+    oldest-first, deduplicated."""
+    seen = {}
+    for full_url, num in MANHWALATINO_CHAPTER_RE.findall(html):
+        if full_url not in seen:
+            seen[full_url] = {
+                "name": f"Capitulo {num}",
+                "number": num,
+                "url": full_url,
+            }
+    return sorted(seen.values(), key=lambda e: _chapter_sort_key(e["number"]))
+
+
+def manhwalatino_parse_pages(html: str, entry_url: str = "") -> list[str]:
+    """Extract ordered chapter image URLs from a reader page."""
+    imgs = [u.strip() for u in MANHWALATINO_IMG_RE.findall(html)]
+    if not imgs:
+        log(f"DEBUG: no wp-manga-chapter-img found. HTML starts with: {html[:1500]}")
+        raise RuntimeError(f"No chapter images found ({entry_url})")
+    log(f"  First image: {imgs[0][:80]}")
+    return imgs
+
+
+def manhwalatino_download_image(url: str, user_agent: str, timeout: int = 30) -> bytes:
+    """Download one chapter image. The CDN 403s without a manhwa-latino Referer."""
+    req = urllib.request.Request(url, headers={
+        "User-Agent": user_agent,
+        "Accept": "image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5",
+        "Accept-Language": "es-ES,es;q=0.9,en;q=0.8",
+        "Referer": "https://manhwa-latino.com/",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return resp.read()
+
+
+def manhwalatino_make_comicinfo(series_name: str, entry: dict, page_count: int) -> str:
+    """ComicInfo.xml for a manhwa-latino chapter."""
+    ch_num = re.search(r"\d+(?:\.\d+)?", entry["number"])
+    lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<ComicInfo xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">',
+        f'\t<Series>{series_name}</Series>',
+    ]
+    if ch_num:
+        lines.append(f'\t<Number>{ch_num.group()}</Number>')
+    lines.extend([
+        f'\t<Title>{entry["name"]}</Title>',
+        f'\t<PageCount>{page_count}</PageCount>',
+        '\t<LanguageISO>es</LanguageISO>',
+        '\t<Manga>YesAndRightToLeft</Manga>',
+        '</ComicInfo>',
+    ])
+    return "\n".join(lines)
+
+
+def manhwalatino_download_entry(entry: dict, series_name: str, dest_dir: Path) -> Path:
+    """Download all pages for one chapter (reader page via ByParr, images via
+    plain HTTP + Referer) and build a CBZ. Staging persists pages across retries."""
+    name = entry["name"]
+    entry_url = entry["url"]
+    safe_name = re.sub(r'[^\w\s-]', '_', name)
+    staging_dir = STAGING_DIR / "manhwalatino" / safe_name
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    urls_file = staging_dir / "pages.json"
+    if urls_file.exists():
+        images = json.loads(urls_file.read_text())
+        log(f"  Using cached page list: {len(images)} page(s)")
+    else:
+        log(f"Fetching reader page: {entry_url}")
+        html, final_url = byparr_html(entry_url)
+        log(f"  Page HTML size: {len(html)} bytes")
+        images = manhwalatino_parse_pages(html, entry_url)
+        urls_file.write_text(json.dumps(images))
+
+    total_pages = len(images)
+    log(f"  {total_pages} page(s) to download")
+
+    needed = []
+    for i, img_url in enumerate(images, 1):
+        ext = os.path.splitext(urllib.parse.urlparse(img_url).path)[1] or ".webp"
+        page_path = staging_dir / f"{i:03d}{ext}"
+        if (page_path.exists() and page_path.stat().st_size > 0
+                and is_valid_image(page_path.read_bytes()[:4])):
+            continue
+        needed.append((i, img_url, page_path))
+
+    if needed:
+        log(f"  {len(needed)} page(s) to download ({total_pages - len(needed)} cached)")
+        failed_pages: list[int] = []
+        for i, img_url, page_path in needed:
+            log(f"  Page {i}/{total_pages}", transient=True)
+            try:
+                img_data = manhwalatino_download_image(img_url, MANHWALATINO_USER_AGENT)
+                if is_valid_image(img_data[:4]):
+                    page_path.write_bytes(img_data)
+                else:
+                    log(f"  Page {i}: not an image ({len(img_data)} bytes)")
+                    failed_pages.append(i)
+            except Exception as exc:
+                log(f"  Page {i} failed: {exc}")
+                failed_pages.append(i)
+            time.sleep(random.uniform(0.2, 0.6))
+        if failed_pages:
+            raise RuntimeError(
+                f"{len(failed_pages)}/{total_pages} page(s) failed: {failed_pages}")
+
+    # Build CBZ
+    cbz_name = f"{name}.cbz"
+    cbz_path = dest_dir / cbz_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    buf = io.BytesIO()
+    pages_in_cbz = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for i in range(1, total_pages + 1):
+            matches = [m for m in staging_dir.glob(f"{i:03d}.*") if m.suffix != ".json"]
+            if not matches:
+                continue
+            zf.writestr(matches[0].name, matches[0].read_bytes())
+            pages_in_cbz += 1
+        zf.writestr("ComicInfo.xml",
+                    manhwalatino_make_comicinfo(series_name, entry, pages_in_cbz).encode("utf-8"))
+    cbz_path.write_bytes(buf.getvalue())
+    shutil.rmtree(staging_dir)
+    log(f"Created: {cbz_name} ({pages_in_cbz}/{total_pages} pages, {len(buf.getvalue()) // 1024}KB)")
+    return cbz_path
+
+
+def run_manhwalatino_pipeline(args, series: str, started: str, prev_status):
+    """manhwa-latino download pipeline: series page -> chapters -> images -> CBZ."""
+    errors = []
+    completed_count = 0
+    total_count = 0
+    volumes = []
+    final_state = "failed"
+
+    try:
+        update_status(
+            state="running", url=args.url, series=series,
+            total=0, completed=0, current="Fetching chapter list...",
+            volumes=[], errors=[], pid=os.getpid(),
+        )
+
+        log(f"Fetching series page: {args.url}")
+        html, final_url = byparr_html(args.url)
+        log(f"Series HTML size: {len(html)} bytes")
+
+        entries = manhwalatino_parse_entries(html)
+        total_count = len(entries)
+        if not entries:
+            log(f"DEBUG: No chapters found. HTML starts with: {html[:2000]}")
+            raise RuntimeError("No chapters found on the page.")
+        log(f"Found {total_count} chapter(s): {entries[0]['name']} … {entries[-1]['name']}")
+
+        volumes = [{"name": e["name"], "state": "pending"} for e in entries]
+
+        # Skip chapters already done (retry) or already present on disk
+        previously_done = set()
+        if (prev_status and prev_status.get("url") == args.url
+                and prev_status.get("series") == series):
+            for idx, vol in enumerate(prev_status.get("volumes", [])):
+                if vol.get("state") == "done" and idx < total_count:
+                    previously_done.add(idx)
+                    volumes[idx]["state"] = "done"
+                    completed_count += 1
+
+        series_dir = UPLOAD_DIR / series
+        for i, entry in enumerate(entries):
+            if i in previously_done:
+                continue
+            cbz_name = f"{entry['name']}.cbz"
+            if ((series_dir / cbz_name).exists() and (series_dir / cbz_name).stat().st_size > 10240) or \
+               ((COMICS_DIR / series / cbz_name).exists() and (COMICS_DIR / series / cbz_name).stat().st_size > 10240):
+                previously_done.add(i)
+                volumes[i]["state"] = "done"
+                completed_count += 1
+        if completed_count:
+            log(f"Skipping {len(previously_done)} chapter(s) already on disk / completed")
+
+        update_status(total=total_count, completed=completed_count, volumes=volumes)
+
+        for i, entry in enumerate(entries):
+            if i in previously_done:
+                continue
+            entry_label = f"{entry['name']} ({i+1}/{total_count})"
+            volumes[i]["state"] = "downloading"
+            update_status(completed=completed_count,
+                          current=f"Downloading {entry_label}", volumes=volumes)
+            try:
+                cbz_path = manhwalatino_download_entry(entry, series, series_dir)
+                volumes[i]["name"] = cbz_path.name
+                volumes[i]["state"] = "done"
+                completed_count += 1
+                update_status(completed=completed_count, volumes=volumes)
+            except Exception as e:
+                tb = traceback.format_exc()
+                log(f"ERROR: {entry_label}: {e}")
+                log(f"Traceback:\n{tb}")
+                errors.append(f"{entry_label}: {e}")
+                volumes[i]["state"] = "failed"
+                update_status(errors=errors, volumes=volumes)
+
+            if i < total_count - 1:
+                between_delay = random.uniform(5, 15)
+                log(f"Waiting {between_delay:.0f}s before next chapter...")
+                time.sleep(between_delay)
+
+        final_state = "completed" if completed_count == total_count else "failed"
+        log(f"Done: {completed_count}/{total_count} chapter(s) for '{series}'")
+        update_status(state=final_state, current="Done")
+
+        if final_state == "completed":
+            notify(f"✅ {series}",
+                   f"Downloaded {completed_count}/{total_count} chapter(s)\nTriggered by: {args.user}",
+                   tags="white_check_mark")
+        else:
+            failed = [v["name"] for v in volumes if v["state"] == "failed"]
+            notify(f"⚠️ {series}",
+                   f"{completed_count}/{total_count} chapter(s)\nFailed: {', '.join(failed)}\nTriggered by: {args.user}",
+                   tags="warning", priority="high")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        log(f"FATAL: {e}")
+        log(f"Traceback:\n{tb}")
+        errors.append(str(e))
+        update_status(state="failed", current=str(e), errors=errors)
+        final_state = "failed"
+        notify(f"❌ {series}", f"Download failed: {e}\nTriggered by: {args.user}",
+               tags="x", priority="high")
+
+    finally:
+        remove_pid()
+        append_history({
+            "url": args.url, "series": series, "started": started,
+            "finished": datetime.now(timezone.utc).isoformat(),
+            "state": final_state,
+            "total": total_count, "completed": completed_count, "errors": errors,
+        })
+
+
+# --- mangolibreria.com pipeline (Next.js app; Cloudflare on pages via ByParr,
+# chapter list + image URLs embedded in the escaped __next_f JSON stream; image
+# CDN (s1.m440.in) needs no special headers) ---
+
+# In the page's escaped JSON: {"id":N,"chapter_number":"X","release_date":"...","chapter_path":"/comics/.../chapters/N"}
+MANGOLIBRERIA_CHAPTER_RE = re.compile(
+    r'"id":\d+,"chapter_number":"([0-9.]+)","release_date":"[^"]*","chapter_path":"([^"]+)"'
+)
+# Page images live on the m440.in CDN under /chapters/<slug>/<n>.webp
+MANGOLIBRERIA_IMG_RE = re.compile(
+    r'https://s\d+\.m440\.in/uploads/manga/[^"\\\s>]+/chapters/[^"\\\s>]+\.(?:webp|jpg|jpeg|png)',
+    re.IGNORECASE,
+)
+MANGOLIBRERIA_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64; rv:149.0) Gecko/20100101 Firefox/149.0"
+)
+
+
+def mangolibreria_series_name_from_url(url: str) -> str:
+    """Derive a series name from a mangolibreria /comics/<slug> URL."""
+    parts = urllib.parse.urlparse(url).path.strip("/").split("/")
+    slug = parts[1] if len(parts) > 1 and parts[0] == "comics" else (parts[-1] if parts else "")
+    slug = SLUG_CLEANUP_RE.sub("", slug)
+    return slug.replace("-", " ").title()
+
+
+def mangolibreria_parse_entries(html: str) -> list[dict]:
+    """Parse the chapter list from the Next.js JSON stream. Returns
+    [{name, number, url}] oldest-first, deduplicated."""
+    clean = html.replace('\\"', '"')
+    seen = {}
+    for num, path in MANGOLIBRERIA_CHAPTER_RE.findall(clean):
+        full_url = "https://mangolibreria.com" + path
+        if full_url not in seen:
+            seen[full_url] = {"name": f"Capitulo {num}", "number": num, "url": full_url}
+    return sorted(seen.values(), key=lambda e: _chapter_sort_key(e["number"]))
+
+
+def mangolibreria_parse_pages(html: str, entry_url: str = "") -> list[str]:
+    """Extract ordered chapter image URLs from a chapter page (order-preserving,
+    deduplicated)."""
+    clean = html.replace('\\"', '"')
+    imgs, seen = [], set()
+    for u in MANGOLIBRERIA_IMG_RE.findall(clean):
+        if u not in seen:
+            seen.add(u)
+            imgs.append(u)
+    if not imgs:
+        log(f"DEBUG: no m440.in chapter images found. HTML starts with: {clean[:1500]}")
+        raise RuntimeError(f"No chapter images found ({entry_url})")
+    log(f"  First image: {imgs[0][:80]}")
+    return imgs
+
+
+# The m440.in CDN spreads images across numbered server shards (s1, s2, …) and a
+# given image is NOT present on every shard — the URL in the page points at one
+# shard, but that one may 404 while another serves the file. So on failure, swap
+# the shard subdomain and retry across all of them.
+MANGOLIBRERIA_SHARDS = ("s1", "s2", "s3", "s4")
+MANGOLIBRERIA_IMG_ROUNDS = 2   # full passes over all shards before giving up
+_MANGO_SHARD_RE = re.compile(r"^(https://)s\d+(\.m440\.in/)", re.IGNORECASE)
+
+
+def mangolibreria_download_image(url: str, user_agent: str, timeout: int = 30) -> bytes:
+    """Download one chapter image from the m440.in CDN, trying each server shard
+    (s1, s2, …) since an image present on one shard may 404 on another."""
+    headers = {
+        "User-Agent": user_agent,
+        "Accept": "image/avif,image/webp,image/png,image/*;q=0.8,*/*;q=0.5",
+        "Referer": "https://mangolibreria.com/",
+    }
+    last_err = None
+    for rnd in range(MANGOLIBRERIA_IMG_ROUNDS):
+        for shard in MANGOLIBRERIA_SHARDS:
+            shard_url = _MANGO_SHARD_RE.sub(rf"\g<1>{shard}\g<2>", url)
+            try:
+                req = urllib.request.Request(shard_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    data = resp.read()
+                if is_valid_image(data[:4]):
+                    return data
+                last_err = RuntimeError(f"not an image ({len(data)} bytes)")
+            except urllib.error.HTTPError as exc:
+                last_err = exc            # 404 on this shard — try the next
+            except Exception as exc:
+                last_err = exc
+        time.sleep(random.uniform(0.5, 1.0) * (rnd + 1))
+    raise RuntimeError(f"all shards failed: {last_err}")
+
+
+def mangolibreria_download_entry(entry: dict, series_name: str, dest_dir: Path) -> Path:
+    """Download all pages for one chapter (chapter page via ByParr, images via
+    plain HTTP) and build a CBZ. Staging persists pages across retries."""
+    name = entry["name"]
+    entry_url = entry["url"]
+    safe_name = re.sub(r'[^\w\s-]', '_', name)
+    staging_dir = STAGING_DIR / "mangolibreria" / safe_name
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    urls_file = staging_dir / "pages.json"
+    if urls_file.exists():
+        images = json.loads(urls_file.read_text())
+        log(f"  Using cached page list: {len(images)} page(s)")
+    else:
+        log(f"Fetching chapter page: {entry_url}")
+        html, final_url = byparr_html(entry_url)
+        log(f"  Page HTML size: {len(html)} bytes")
+        images = mangolibreria_parse_pages(html, entry_url)
+        urls_file.write_text(json.dumps(images))
+
+    total_pages = len(images)
+    log(f"  {total_pages} page(s) to download")
+
+    needed = []
+    for i, img_url in enumerate(images, 1):
+        ext = os.path.splitext(urllib.parse.urlparse(img_url).path)[1] or ".webp"
+        page_path = staging_dir / f"{i:03d}{ext}"
+        if (page_path.exists() and page_path.stat().st_size > 0
+                and is_valid_image(page_path.read_bytes()[:4])):
+            continue
+        needed.append((i, img_url, page_path))
+
+    if needed:
+        log(f"  {len(needed)} page(s) to download ({total_pages - len(needed)} cached)")
+        failed_pages: list[int] = []
+        for i, img_url, page_path in needed:
+            log(f"  Page {i}/{total_pages}", transient=True)
+            try:
+                img_data = mangolibreria_download_image(img_url, MANGOLIBRERIA_USER_AGENT)
+                if is_valid_image(img_data[:4]):
+                    page_path.write_bytes(img_data)
+                else:
+                    log(f"  Page {i}: not an image ({len(img_data)} bytes)")
+                    failed_pages.append(i)
+            except Exception as exc:
+                log(f"  Page {i} failed: {exc}")
+                failed_pages.append(i)
+            time.sleep(random.uniform(0.2, 0.6))
+        if failed_pages:
+            raise RuntimeError(
+                f"{len(failed_pages)}/{total_pages} page(s) failed: {failed_pages}")
+
+    # Build CBZ
+    cbz_name = f"{name}.cbz"
+    cbz_path = dest_dir / cbz_name
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    buf = io.BytesIO()
+    pages_in_cbz = 0
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_STORED) as zf:
+        for i in range(1, total_pages + 1):
+            matches = [m for m in staging_dir.glob(f"{i:03d}.*") if m.suffix != ".json"]
+            if not matches:
+                continue
+            zf.writestr(matches[0].name, matches[0].read_bytes())
+            pages_in_cbz += 1
+        zf.writestr("ComicInfo.xml",
+                    manhwalatino_make_comicinfo(series_name, entry, pages_in_cbz).encode("utf-8"))
+    cbz_path.write_bytes(buf.getvalue())
+    shutil.rmtree(staging_dir)
+    log(f"Created: {cbz_name} ({pages_in_cbz}/{total_pages} pages, {len(buf.getvalue()) // 1024}KB)")
+    return cbz_path
+
+
+def run_mangolibreria_pipeline(args, series: str, started: str, prev_status):
+    """mangolibreria download pipeline: series page -> chapters -> images -> CBZ."""
+    errors = []
+    completed_count = 0
+    total_count = 0
+    volumes = []
+    final_state = "failed"
+
+    try:
+        update_status(
+            state="running", url=args.url, series=series,
+            total=0, completed=0, current="Fetching chapter list...",
+            volumes=[], errors=[], pid=os.getpid(),
+        )
+
+        log(f"Fetching series page: {args.url}")
+        html, final_url = byparr_html(args.url)
+        log(f"Series HTML size: {len(html)} bytes")
+
+        entries = mangolibreria_parse_entries(html)
+        total_count = len(entries)
+        if not entries:
+            log(f"DEBUG: No chapters found. HTML starts with: {html[:2000]}")
+            raise RuntimeError("No chapters found on the page.")
+        log(f"Found {total_count} chapter(s): {entries[0]['name']} … {entries[-1]['name']}")
+
+        volumes = [{"name": e["name"], "state": "pending"} for e in entries]
+
+        previously_done = set()
+        if (prev_status and prev_status.get("url") == args.url
+                and prev_status.get("series") == series):
+            for idx, vol in enumerate(prev_status.get("volumes", [])):
+                if vol.get("state") == "done" and idx < total_count:
+                    previously_done.add(idx)
+                    volumes[idx]["state"] = "done"
+                    completed_count += 1
+
+        series_dir = UPLOAD_DIR / series
+        for i, entry in enumerate(entries):
+            if i in previously_done:
+                continue
+            cbz_name = f"{entry['name']}.cbz"
+            if ((series_dir / cbz_name).exists() and (series_dir / cbz_name).stat().st_size > 10240) or \
+               ((COMICS_DIR / series / cbz_name).exists() and (COMICS_DIR / series / cbz_name).stat().st_size > 10240):
+                previously_done.add(i)
+                volumes[i]["state"] = "done"
+                completed_count += 1
+        if completed_count:
+            log(f"Skipping {len(previously_done)} chapter(s) already on disk / completed")
+
+        update_status(total=total_count, completed=completed_count, volumes=volumes)
+
+        for i, entry in enumerate(entries):
+            if i in previously_done:
+                continue
+            entry_label = f"{entry['name']} ({i+1}/{total_count})"
+            volumes[i]["state"] = "downloading"
+            update_status(completed=completed_count,
+                          current=f"Downloading {entry_label}", volumes=volumes)
+            try:
+                cbz_path = mangolibreria_download_entry(entry, series, series_dir)
+                volumes[i]["name"] = cbz_path.name
+                volumes[i]["state"] = "done"
+                completed_count += 1
+                update_status(completed=completed_count, volumes=volumes)
+            except Exception as e:
+                tb = traceback.format_exc()
+                log(f"ERROR: {entry_label}: {e}")
+                log(f"Traceback:\n{tb}")
+                errors.append(f"{entry_label}: {e}")
+                volumes[i]["state"] = "failed"
+                update_status(errors=errors, volumes=volumes)
+
+            if i < total_count - 1:
+                between_delay = random.uniform(5, 15)
+                log(f"Waiting {between_delay:.0f}s before next chapter...")
+                time.sleep(between_delay)
+
+        final_state = "completed" if completed_count == total_count else "failed"
+        log(f"Done: {completed_count}/{total_count} chapter(s) for '{series}'")
+        update_status(state=final_state, current="Done")
+
+        if final_state == "completed":
+            notify(f"✅ {series}",
+                   f"Downloaded {completed_count}/{total_count} chapter(s)\nTriggered by: {args.user}",
+                   tags="white_check_mark")
+        else:
+            failed = [v["name"] for v in volumes if v["state"] == "failed"]
+            notify(f"⚠️ {series}",
+                   f"{completed_count}/{total_count} chapter(s)\nFailed: {', '.join(failed)}\nTriggered by: {args.user}",
+                   tags="warning", priority="high")
+
+    except Exception as e:
+        tb = traceback.format_exc()
+        log(f"FATAL: {e}")
+        log(f"Traceback:\n{tb}")
+        errors.append(str(e))
+        update_status(state="failed", current=str(e), errors=errors)
+        final_state = "failed"
+        notify(f"❌ {series}", f"Download failed: {e}\nTriggered by: {args.user}",
+               tags="x", priority="high")
+
+    finally:
+        remove_pid()
+        append_history({
+            "url": args.url, "series": series, "started": started,
+            "finished": datetime.now(timezone.utc).isoformat(),
+            "state": final_state,
+            "total": total_count, "completed": completed_count, "errors": errors,
+        })
+
+
 # --- Main ---
 
 def main():
     parser = argparse.ArgumentParser(description="Download manga")
-    parser.add_argument("--url", required=True, help="Series URL (tomosmanga.com or sushiscan.net)")
+    parser.add_argument("--url", required=True, help="Series URL (tomosmanga.com, sushiscan.net, manhwa-latino.com, or mangolibreria.com)")
     parser.add_argument("--series", default="", help="Override series name")
     parser.add_argument("--user", default="Unknown", help="Name of the user who triggered the download")
     args = parser.parse_args()
@@ -1302,10 +1858,16 @@ def main():
 
     # Detect source and derive series name
     is_sushiscan = "sushiscan.net" in args.url
+    is_manhwalatino = "manhwa-latino.com" in args.url
+    is_mangolibreria = "mangolibreria.com" in args.url
     if args.series.strip():
         series = args.series.strip()
     elif is_sushiscan:
         series = sushiscan_series_name_from_url(args.url)
+    elif is_manhwalatino:
+        series = manhwalatino_series_name_from_url(args.url)
+    elif is_mangolibreria:
+        series = mangolibreria_series_name_from_url(args.url)
     else:
         series = series_name_from_url(args.url)
     started = datetime.now(timezone.utc).isoformat()
@@ -1336,6 +1898,14 @@ def main():
 
     if is_sushiscan:
         run_sushiscan_pipeline(args, series, started, prev_status)
+        return
+
+    if is_manhwalatino:
+        run_manhwalatino_pipeline(args, series, started, prev_status)
+        return
+
+    if is_mangolibreria:
+        run_mangolibreria_pipeline(args, series, started, prev_status)
         return
 
     # --- tomosmanga.com pipeline ---

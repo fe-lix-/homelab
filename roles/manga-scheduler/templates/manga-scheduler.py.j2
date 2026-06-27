@@ -175,6 +175,11 @@ def move_files(
         print(f"[dry-run] Would create directory: {dest_dir}")
     else:
         dest_dir.mkdir(parents=True, exist_ok=True)
+        # Force group-writable + setgid so comics-rw members (e.g. felix over
+        # Samba) can add volumes to the series later. A bare mkdir leaves it
+        # 0755 (umask), which blocks group writes even though /srv/comics is
+        # 2775. chmod also repairs the mode on pre-existing dirs.
+        dest_dir.chmod(0o2775)
 
     for f in files:
         dest = dest_dir / f.name

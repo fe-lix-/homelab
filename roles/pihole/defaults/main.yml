@@ -6,3 +6,14 @@ pihole_user: svc-pihole
 pihole_admin_password: "CHANGE_ME"
 pihole_upstream_dns1: "1.1.1.1"
 pihole_upstream_dns2: "8.8.8.8"
+
+# Split-horizon overrides: names whose PUBLIC A record points at the WAN IP
+# (e.g. auth.lab.delval.eu) but which LAN/VPN clients must reach over the LAN.
+# Without this, LAN clients hit the public IP and rely on NAT hairpin (flaky,
+# and broken outright whenever the WAN IP changes and the public A record goes
+# stale). nginx serves these vhosts on the LAN IP with the same wildcard cert.
+pihole_local_dns_records:
+  - {name: "auth.{{ base_domain }}", ip: "{{ vault_server_ip }}"}
+  - {name: "{{ base_domain }}", ip: "{{ vault_server_ip }}"}
+  - {name: "{{ vaultwarden_domain }}", ip: "{{ vault_server_ip }}"}
+  - {name: "{{ home_domain }}", ip: "{{ vault_server_ip }}"}

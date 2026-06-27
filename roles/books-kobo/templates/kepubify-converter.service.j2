@@ -1,0 +1,10 @@
+[Unit]
+Description=kepubify converter — build Kobo KEPUBs from {{ books_source_dir }}
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ books_data_dir }}/kepubify-converter.py
+Nice=19
+IOSchedulingClass=idle

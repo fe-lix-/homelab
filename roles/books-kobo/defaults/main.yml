@@ -1,0 +1,21 @@
+---
+books_source_dir: /srv/books          # EPUB novels (scraper output + manual drops)
+books_kobo_dir: /srv/books-kobo        # KEPUB output; Komga "Books" library synced to Kobo
+books_data_dir: /opt/books-kobo
+
+# kepubify: single static Go binary (EPUB -> Kobo-optimized KEPUB).
+books_kepubify_version: "v4.0.4"
+books_kepubify_bin: "{{ books_data_dir }}/kepubify"
+books_kepubify_url: "https://github.com/pgaskin/kepubify/releases/download/{{ books_kepubify_version }}/kepubify-linux-64bit"
+
+# Novel scraper runs in the lightnovel-crawler image (has ebooklib/bs4/requests);
+# fetches Cloudflare-protected pages through ByParr. On-demand via scrape-novel.sh.
+books_scraper_image: "ghcr.io/dipu-bd/lightnovel-crawler:latest"
+books_byparr_url: "http://127.0.0.1:{{ byparr_port }}/v1"
+
+# Nightly kepubify of any new EPUBs dropped in books_source_dir.
+books_schedule: "*-*-* 04:30:00"
+
+books_ntfy_url: "http://127.0.0.1:{{ ntfy_port }}"
+books_ntfy_topic: "books-kobo"
+books_ntfy_token: ""

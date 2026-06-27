@@ -12,6 +12,8 @@ uptime_kuma_monitors:
     url: "http://host-gateway:{{ komga_port }}"
   - name: Manga Scheduler UI
     url: "http://host-gateway:{{ manga_scheduler_ui_port }}"
+  - name: Komf
+    url: "http://host-gateway:{{ komf_port }}"
   - name: Jellyfin
     url: "http://host-gateway:{{ jellyfin_port }}"
   - name: qBittorrent
@@ -32,6 +34,8 @@ uptime_kuma_monitors:
     url: "http://host-gateway:{{ immich_port }}"
   - name: Audiobookshelf
     url: "http://host-gateway:{{ audiobookshelf_port }}"
+  - name: Calibre-Web
+    url: "http://host-gateway:{{ calibre_web_port }}"
   - name: Grafana
     url: "http://host-gateway:{{ grafana_port }}"
   - name: Home Assistant
@@ -61,8 +65,6 @@ uptime_kuma_monitors:
     type: tcp
     hostname: "{{ ansible_host }}"
     port: "{{ minecraft_port }}"
-  - name: Stardew Valley
-    url: "http://host-gateway:{{ junimoserver_vnc_port }}"
   - name: ntfy
     url: "http://host-gateway:{{ ntfy_port }}/v1/health"
   - name: Vaultwarden

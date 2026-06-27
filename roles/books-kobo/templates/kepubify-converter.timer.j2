@@ -1,0 +1,9 @@
+[Unit]
+Description=Convert new EPUB novels to Kobo-optimized KEPUBs
+
+[Timer]
+OnCalendar={{ books_schedule }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

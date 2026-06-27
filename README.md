@@ -8,6 +8,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 |---------|-------------|-----------|
 | Jellyfin | Media server | `jellyfin.homelab.example.com` |
 | Komga | Comic & manga library | `comics.homelab.example.com` |
+| Komf | Comic/manga metadata fetcher for Komga (writes ComicInfo.xml + Komga DB) | `komf.homelab.example.com` |
 | Sonarr | TV show management | `sonarr.homelab.example.com` |
 | Radarr | Movie management | `radarr.homelab.example.com` |
 | Lidarr | Music management | `lidarr.homelab.example.com` |
@@ -19,6 +20,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | qBittorrent | BitTorrent client | `torrent.homelab.example.com` |
 | Immich | Photo & video management | `photos.homelab.example.com` |
 | Audiobookshelf | Audiobook & podcast server | `audiobooks.homelab.example.com` |
+| Calibre-Web | Ebook library (Calibre-Web-Automated; OPDS for e-readers) | `ebooks.homelab.example.com` |
 | Grafana | Dashboards & logs (+ Loki + Alloy + systemd journal) | `grafana.homelab.example.com` |
 | Authelia | SSO & access control | `auth.homelab.example.com` |
 | LLDAP | Lightweight LDAP user directory (self-service profile editing for all users) | `lldap.homelab.example.com` |
@@ -29,7 +31,6 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Pi-hole | DNS ad blocker | `pihole.homelab.example.com` |
 | mitmproxy | HTTP traffic discovery proxy (LAN proxy on `<host>:8118`, mitmweb UI behind Authelia admin) | `mitm.homelab.example.com` |
 | Minecraft | PaperMC 1.20.4 (offline mode, LAN only) | `YOUR_SERVER_IP:25565` (direct TCP, UFW-restricted to 10.0.0.0/8) |
-| Stardew Valley | JunimoServer headless multiplayer host (Steam relay; noVNC admin UI behind Authelia `stardew` group) | `stardew.homelab.example.com` |
 | Homepage | Dashboard | `homelab.example.com` |
 | manga-scheduler | Drip-feeds manga from `/srv/uploads/mangas` into Komga library every 2 days (systemd timer) | — |
 | ntfy | Push notification server (publicly accessible, ntfy built-in auth) | `ntfy.homelab.example.com` |
@@ -58,7 +59,7 @@ The repo also manages a separate **mail server VPS** as a different host group /
   - **OIDC** (native integration, `consent_mode: implicit`) for: Grafana, Komga, Immich, Audiobookshelf, Jellyfin. Group enforcement uses `authorization_policies` in the OIDC config (not `access_control` rules, which don't apply to OIDC flows).
   - **Own auth**: Home Assistant (built-in auth + Nabu Casa for remote access)
   - **LLDAP** as user directory — Authelia connects via `ldap://lldap:3890` on the shared `auth-internal` Docker network. All authenticated users can reach `lldap.homelab.example.com` for self-service profile editing.
-  - Groups: `admin` (everything), `arr-stack`, `audiobook`, `comics`, `filesharing`, `grafana`, `jellyfin`, `minecraft`, `photo`, `stardew`, `torrent`
+  - Groups: `admin` (everything), `arr-stack`, `audiobook`, `comics`, `filesharing`, `grafana`, `jellyfin`, `minecraft`, `photo`, `torrent`
 - Security headers on all HTTPS responses (HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
 - Local network access guard (10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16) — includes WireGuard VPN subnet (`192.168.4.0/24`), so VPN clients have full service access
 - **WireGuard VPN** — UniFi Cloud Gateway Ultra serves a WireGuard VPN on `192.168.4.0/24` (port 51820). Use `Endpoint = YOUR_ROUTER_IP:51820` from LAN, `Endpoint = YOUR_PUBLIC_IP:51820` from internet (NAT hairpin prevents using the public IP from inside). The server has a static route to `192.168.4.0/24` via `YOUR_ROUTER_IP` (managed by the `base` role via netplan).

@@ -11,6 +11,15 @@ services:
     volumes:
       - "{{ komga_data_dir }}/config:/config"
       - "{{ komga_library_dir }}:/data"
+      - "{{ komga_kobo_library_dir }}:/data-kobo"
+      - "{{ komga_books_kobo_dir }}:/data-books"
     user: "{{ komga_uid }}:{{ komga_gid }}"
+    networks:
+      - komga-net          # shared with komf (metadata fetcher) for API access
     environment:
       TZ: "{{ timezone }}"
+
+networks:
+  komga-net:
+    name: komga-net
+    external: true         # created by the komga role before the stack starts

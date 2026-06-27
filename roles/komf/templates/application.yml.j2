@@ -1,0 +1,43 @@
+komga:
+  baseUri: "{{ komf_komga_base_uri }}"
+  komgaUser: "{{ komf_komga_user }}"
+  komgaPassword: "{{ komf_komga_password }}"
+  eventListener:
+    enabled: true                  # react to new series the manga-scheduler adds
+  metadataUpdate:
+    default:
+      libraryType: "{{ komf_library_type }}"
+      updateModes:
+{% for mode in komf_update_modes %}
+        - {{ mode }}
+{% endfor %}
+      aggregate: true              # merge metadata from multiple providers
+      bookCovers: true
+      seriesCovers: true
+
+metadataProviders:
+  malClientId: "{{ komf_mal_client_id }}"
+  comicVineApiKey: "{{ komf_comicvine_api_key }}"
+  defaultProviders:
+    mangaUpdates:
+      priority: 10
+      enabled: true
+    aniList:
+      priority: 20
+      enabled: true
+    mal:
+      priority: 30
+      enabled: {{ (komf_mal_client_id | length > 0) | lower }}
+    # Western comics (Asterix, Titeuf, Les Sisters) need ComicVine — only
+    # enabled once an API key is provided.
+    comicVine:
+      priority: 40
+      enabled: {{ (komf_comicvine_api_key | length > 0) | lower }}
+
+server:
+  port: 8085
+
+database:
+  file: /config/database.sqlite
+
+logLevel: INFO

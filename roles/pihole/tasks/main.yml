@@ -38,6 +38,14 @@
     - {path: "{{ pihole_data_dir }}/config/dnsmasq.d", owner: root, mode: "0755"}
     - {path: "{{ pihole_data_dir }}/config/pihole", owner: "{{ pihole_user }}", mode: "0775"}
 
+- name: Deploy Pi-hole local DNS overrides (split-horizon)
+  ansible.builtin.template:
+    src: local-dns.conf.j2
+    dest: "{{ pihole_data_dir }}/config/dnsmasq.d/02-local-dns.conf"
+    owner: root
+    mode: "0644"
+  notify: Restart pihole
+
 - name: Deploy Pi-hole docker-compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2

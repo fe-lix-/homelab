@@ -244,6 +244,7 @@ access_control:
         - "pihole.{{ base_domain }}"
         - "screentime.{{ base_domain }}"
         - "mitm.{{ base_domain }}"
+        - "komf.{{ base_domain }}"
       policy: {{ authelia_default_policy }}
       subject:
         - "group:admin"
@@ -290,6 +291,14 @@ access_control:
         - "group:audiobook"
         - "group:admin"
 
+    # Ebooks (Calibre-Web) — forward-auth on the web UI; /opds is exempted in nginx
+    - domain:
+        - "ebooks.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:ebooks"
+        - "group:admin"
+
     # File sharing (Goploader)
     - domain:
         - "files.{{ base_domain }}"
@@ -320,14 +329,6 @@ access_control:
       policy: {{ authelia_default_policy }}
       subject:
         - "group:photo"
-        - "group:admin"
-
-    # Stardew Valley (JunimoServer noVNC admin UI)
-    - domain:
-        - "stardew.{{ base_domain }}"
-      policy: {{ authelia_default_policy }}
-      subject:
-        - "group:stardew"
         - "group:admin"
 
     # Minecraft IP whitelist portal

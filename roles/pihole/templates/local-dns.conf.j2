@@ -1,0 +1,6 @@
+# Managed by Ansible (roles/pihole) — split-horizon local DNS overrides.
+# host-record forces dnsmasq/FTL to answer these names with the LAN IP,
+# overriding the public A record from upstream resolvers.
+{% for r in pihole_local_dns_records %}
+host-record={{ r.name }},{{ r.ip }}
+{% endfor %}

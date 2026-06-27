@@ -1,0 +1,9 @@
+# KCC CLI image + RAR support. The upstream image's 7z lacks the non-free RAR
+# codec, so CBR (RAR) comics fail to extract; p7zip-rar adds Rar.so. Most of the
+# library is CBR, so this is required.
+FROM {{ kcc_base_image }}
+USER root
+RUN echo "deb http://deb.debian.org/debian bullseye non-free" >> /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends p7zip-rar \
+    && rm -rf /var/lib/apt/lists/*

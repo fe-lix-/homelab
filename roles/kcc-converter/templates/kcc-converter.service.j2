@@ -1,0 +1,14 @@
+[Unit]
+Description=KCC converter — build Kobo-optimized KEPUBs from {{ kcc_source_dir }}
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+# The script orchestrates `docker run`; the heavy lifting (and CPU/IO) happens in
+# the container (capped via --cpus). Nice/idle-IO keep the orchestrator polite.
+# No ProtectSystem/ProtectHome sandboxing here — it would fight the docker CLI.
+ExecStart=/usr/bin/python3 {{ kcc_data_dir }}/kcc-converter.py
+Nice=19
+IOSchedulingClass=idle

@@ -1,0 +1,26 @@
+---
+services:
+  komf:
+    image: "{{ komf_image }}"
+    container_name: komf
+    restart: unless-stopped
+    user: "{{ komf_uid }}:{{ komf_gid }}"
+    group_add:                            # group-write on /srv/comics archives
+{% for g in komf_write_groups %}
+      - "{{ ansible_facts['getent_group'][g][1] }}"   # {{ g }}
+{% endfor %}
+    ports:
+      - "127.0.0.1:{{ komf_port }}:8085"
+    volumes:
+      - "{{ komf_data_dir }}/config:/config"
+      # Mount the source library at the SAME path Komga reports (/data) so
+      # COMIC_INFO writes land in the right archive files.
+      - "{{ komf_library_dir }}:{{ komf_library_mount }}"
+    networks:
+      - komga-net                        # reach Komga's API by container name
+    environment:
+      TZ: "{{ timezone }}"
+
+networks:
+  komga-net:
+    external: true                       # created by the komga role

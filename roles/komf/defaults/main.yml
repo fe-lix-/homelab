@@ -1,0 +1,41 @@
+---
+komf_version: "1.7.1"
+komf_image: "sndxr/komf:{{ komf_version }}"
+komf_port: 8087                       # host-mapped to 127.0.0.1 (nginx fronts it); 8085 is qbittorrent
+komf_data_dir: /opt/komf              # /config: application.yml + database.sqlite
+
+# Komf reaches Komga over the shared komga-net docker network by container name
+# (NOT the host-mapped 127.0.0.1 port, which containers can't reach).
+komf_komga_base_uri: "http://komga:25600"
+komf_komga_user: "{{ komga_admin_email }}"
+komf_komga_password: "{{ komga_admin_password }}"
+
+# To embed ComicInfo.xml back into archives (COMIC_INFO update mode), komf must
+# see the book files at the SAME container path Komga reports them at (/data).
+komf_library_dir: "{{ komga_library_dir }}"   # /srv/comics on the host
+komf_library_mount: /data                      # must match komga's compose mount
+
+# komf writes into the source archives, so it runs as Komga's user (svc-media,
+# resolved via getent in tasks) with the comics group(s) added for group-write.
+# Files arrive group comics-rw (manga-scheduler flow) or samba-rw (direct [srv]
+# Samba uploads) — add both so komf can write either. Files must also be g+w
+# (664); the storage/upload masks give that.
+komf_user: "{{ komga_user }}"          # svc-media
+komf_write_groups:
+  - comics-rw
+  - samba-rw
+
+komf_library_type: "MANGA"             # most of the library is manga
+# Update both: API writes to Komga's DB (fixes the main library for every format,
+# incl. any remaining non-CBZ); COMIC_INFO embeds <Writer> into the CBZ archives
+# so KCC picks it up for the Kobo library.
+komf_update_modes:
+  - API
+  - COMIC_INFO
+
+# Provider credentials (optional). Set in vault to enable:
+#   - MAL needs a client id (https://myanimelist.net/apiconfig)
+#   - ComicVine (api key) is the provider that covers western comics
+#     (Asterix, Titeuf, Les Sisters) that the manga providers don't have.
+komf_mal_client_id: ""
+komf_comicvine_api_key: ""

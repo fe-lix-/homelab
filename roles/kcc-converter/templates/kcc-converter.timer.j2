@@ -1,0 +1,9 @@
+[Unit]
+Description=Convert new comics to Kobo-optimized KEPUBs
+
+[Timer]
+OnCalendar={{ kcc_schedule }}
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -123,6 +123,30 @@ server {
     return 301 https://$host$request_uri;
 }
 
+# Plain-HTTP OPDS for the Xteink X4 (Crosspoint). The ESP32's TLS stack is too
+# memory-constrained to reliably re-handshake per request, so HTTPS OPDS browsing
+# fails after the first feed. This LAN-only (local_guard) HTTP endpoint lets the
+# X4 use http://ebooks.../opds with stable keep-alive connections. Everything
+# except /opds still redirects to HTTPS. Note: Basic-auth creds travel in
+# cleartext on the LAN here — use a dedicated low-priv Calibre-Web user.
+server {
+    listen 80;
+    server_name ebooks.{{ base_domain }};
+    {{ local_guard() }}
+
+    location ~ ^/opds(/.*)?$ {
+        proxy_pass http://127.0.0.1:{{ calibre_web_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
 # Redirect unknown subdomains to homepage
 server {
     listen {{ nginx_port }} ssl default_server;
@@ -221,6 +245,13 @@ server {
     server_name comics.{{ base_domain }};
     {{ ssl_params() }}
     {{ local_guard() }}
+
+    # Komga's Kobo Sync sends a large X-Kobo-SyncToken response header that
+    # overflows nginx's default proxy buffers — causing 502 "upstream sent too
+    # big header" on /kobo/.../v1/library/sync. Enlarge the proxy buffers.
+    proxy_buffer_size 64k;
+    proxy_buffers 8 64k;
+    proxy_busy_buffers_size 128k;
 
     location = /login {
         if ($arg_error = "access_denied") {
@@ -424,31 +455,6 @@ server {
 
 server {
     listen {{ nginx_port }} ssl;
-    server_name stardew.{{ base_domain }};
-    {{ ssl_params() }}
-    {{ local_guard() }}
-    {{ authelia_location() }}
-
-    # noVNC web client over WebSocket. Long timeouts + buffering off so the
-    # remote-desktop session stays interactive.
-    location / {
-        {{ authelia_auth() }}
-        proxy_pass http://127.0.0.1:{{ junimoserver_vnc_port }};
-        proxy_http_version 1.1;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_read_timeout 24h;
-        proxy_send_timeout 24h;
-        proxy_buffering off;
-    }
-}
-
-server {
-    listen {{ nginx_port }} ssl;
     server_name uptime.{{ base_domain }};
     {{ ssl_params() }}
     {{ local_guard() }}
@@ -612,6 +618,37 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header Upgrade $http_upgrade;
         proxy_set_header Connection "upgrade";
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name ebooks.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    client_max_body_size 0;
+
+    # OPDS feed — used by the Xteink X4 (Crosspoint). It authenticates with
+    # Calibre-Web's own HTTP Basic auth, which forward-auth would break, so this
+    # path is exempt from Authelia (still LAN/VPN-gated by local_guard).
+    location ~ ^/opds(/.*)?$ {
+        proxy_pass http://127.0.0.1:{{ calibre_web_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Web UI — gated by Authelia forward-auth.
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ calibre_web_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 
@@ -1000,6 +1037,23 @@ server {
     location / {
         {{ authelia_auth() }}
         proxy_pass http://127.0.0.1:{{ manga_scheduler_ui_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name komf.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://127.0.0.1:{{ komf_port }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

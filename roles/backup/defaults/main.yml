@@ -9,6 +9,7 @@ backup_immich_dump_path: /opt/immich/db-dump.sql
 backup_paperless_dump_path: /opt/paperless/db-dump.sql
 backup_paths:
   - /opt/komga/config
+  - /opt/komf/config          # komf series-match state (database.sqlite) + config
   - /opt/jellyfin/config
   - /opt/sonarr/config
   - /opt/radarr/config
@@ -19,6 +20,10 @@ backup_paths:
   - /opt/qbittorrent/config
   - /opt/audiobookshelf/config
   - /opt/audiobookshelf/metadata
+  - /opt/calibre-web/config
+  # Curated ebook library (metadata.db + books) — irreplaceable, unlike
+  # re-downloadable /srv/media video, so it IS backed up.
+  - /srv/media/ebooks
   - /opt/homeassistant/config
   - /opt/mediathekarr
   - /opt/joynarr/app
@@ -38,9 +43,6 @@ backup_paths:
   - /srv/paperless
   - /opt/pihole/config
   - /opt/minecraft/data
-  - /opt/junimoserver/saves
-  - /opt/junimoserver/settings
-  - /opt/junimoserver/steam-session
   - /opt/ntfy/config
   - /opt/ntfy/data
   - /opt/vaultwarden/data

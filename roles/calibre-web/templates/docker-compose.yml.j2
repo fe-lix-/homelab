@@ -1,0 +1,20 @@
+---
+services:
+  calibre-web:
+    image: crocodilestick/calibre-web-automated:{{ calibre_web_version }}
+    container_name: calibre-web
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:{{ calibre_web_port }}:8083"
+    volumes:
+      - "{{ calibre_web_data_dir }}/config:/config"
+      - "{{ calibre_web_library_dir }}:/calibre-library"
+      # Container-owned ingest (CWA force-chowns it); drop-in for the auto-convert
+      # → EPUB → import pipeline. Day-to-day uploads go through the web UI.
+      - "{{ calibre_web_ingest_dir }}:/cwa-book-ingest"
+    environment:
+      PUID: "{{ calibre_web_uid }}"
+      PGID: "{{ calibre_web_gid }}"
+      TZ: "{{ timezone }}"
+      # Library is a local bind mount, not an NFS/SMB share.
+      NETWORK_SHARE_MODE: "false"

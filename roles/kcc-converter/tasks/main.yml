@@ -1,0 +1,67 @@
+---
+- name: Create kcc-converter directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - "{{ kcc_data_dir }}"
+    - "{{ kcc_data_dir }}/build"
+
+- name: Deploy KCC Dockerfile (base image + RAR support)
+  ansible.builtin.template:
+    src: Dockerfile.j2
+    dest: "{{ kcc_data_dir }}/build/Dockerfile"
+    owner: root
+    group: root
+    mode: "0644"
+  register: kcc_dockerfile
+
+- name: Build KCC image with RAR support
+  community.docker.docker_image:
+    name: "{{ kcc_image }}"
+    source: build
+    build:
+      path: "{{ kcc_data_dir }}/build"
+      pull: true
+    state: present
+    force_source: "{{ kcc_dockerfile.changed }}"
+
+- name: Deploy KCC converter script
+  ansible.builtin.template:
+    src: kcc-converter.py.j2
+    dest: "{{ kcc_data_dir }}/kcc-converter.py"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy kcc-converter systemd service
+  ansible.builtin.template:
+    src: kcc-converter.service.j2
+    dest: /etc/systemd/system/kcc-converter.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy kcc-converter systemd timer
+  ansible.builtin.template:
+    src: kcc-converter.timer.j2
+    dest: /etc/systemd/system/kcc-converter.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+# The conversion is a long batch — the timer schedules it; the first full run is
+# triggered manually (systemctl start kcc-converter.service).
+- name: Enable and start kcc-converter timer
+  ansible.builtin.systemd:
+    name: kcc-converter.timer
+    enabled: true
+    state: started

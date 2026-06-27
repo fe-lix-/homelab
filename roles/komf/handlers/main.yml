@@ -1,0 +1,5 @@
+---
+- name: Restart komf
+  community.docker.docker_compose_v2:
+    project_src: "{{ komf_data_dir }}"
+    state: restarted

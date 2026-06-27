@@ -36,6 +36,11 @@
     mode: "0644"
   notify: Restart komga
 
+- name: Create shared komga-net docker network (komf joins this)
+  community.docker.docker_network:
+    name: komga-net
+    state: present
+
 - name: Start Komga
   community.docker.docker_compose_v2:
     project_src: "{{ komga_data_dir }}"

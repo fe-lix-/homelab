@@ -1,0 +1,42 @@
+---
+- name: Look up calibre-web user
+  ansible.builtin.getent:
+    database: passwd
+    key: "{{ calibre_web_user }}"
+
+- name: Look up calibre-web group
+  ansible.builtin.getent:
+    database: group
+    key: "{{ calibre_web_group }}"
+
+- name: Set calibre-web uid/gid facts
+  ansible.builtin.set_fact:
+    calibre_web_uid: "{{ ansible_facts['getent_passwd'][calibre_web_user][1] }}"
+    calibre_web_gid: "{{ ansible_facts['getent_group'][calibre_web_group][1] }}"
+
+# The library (/srv/media/ebooks) is owned by the storage role — do NOT create
+# it here. The config and ingest dirs are container-private under /opt.
+- name: Create Calibre-Web directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: "{{ calibre_web_user }}"
+    group: "{{ calibre_web_group }}"
+    mode: "0755"
+  loop:
+    - "{{ calibre_web_data_dir }}"
+    - "{{ calibre_web_data_dir }}/config"
+    - "{{ calibre_web_ingest_dir }}"
+
+- name: Deploy Calibre-Web docker-compose file
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ calibre_web_data_dir }}/docker-compose.yml"
+    owner: "{{ calibre_web_user }}"
+    mode: "0644"
+  notify: Restart calibre-web
+
+- name: Start Calibre-Web
+  community.docker.docker_compose_v2:
+    project_src: "{{ calibre_web_data_dir }}"
+    state: present

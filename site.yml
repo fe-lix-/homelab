@@ -18,6 +18,8 @@
       tags: docker
     - role: komga
       tags: komga
+    - role: komf
+      tags: komf
     - role: jellyfin
       tags: jellyfin
     - role: qbittorrent
@@ -48,6 +50,8 @@
       tags: immich
     - role: audiobookshelf
       tags: audiobookshelf
+    - role: calibre-web
+      tags: calibre-web
     - role: nut
       tags: nut
     - role: monitoring
@@ -68,10 +72,12 @@
       tags: pihole
     - role: minecraft
       tags: minecraft
-    - role: junimoserver
-      tags: junimoserver
     - role: manga-scheduler
       tags: manga-scheduler
+    - role: kcc-converter
+      tags: kcc-converter
+    - role: books-kobo
+      tags: books-kobo
     - role: ntfy
       tags: ntfy
     - role: vaultwarden

@@ -1,0 +1,25 @@
+---
+kcc_source_dir: /srv/comics          # Komga's original CBZ/CBR library (read-only source)
+kcc_output_dir: /srv/comics-kobo     # Kobo-optimized KEPUB output (2nd Komga library)
+kcc_data_dir: /opt/kcc-converter
+kcc_base_image: "ghcr.io/ciromattia/kcc:latest"   # official KCC CLI image (no RAR support)
+kcc_image: "homelab/kcc-rar:latest"               # our image = base + p7zip-rar (CBR support)
+kcc_profile: "KoCC"                  # Kobo Clara Colour
+kcc_schedule: "*-*-* 02:00:00"
+kcc_max_per_run: 60                  # cap NEW conversions per run so backfill spreads over nights
+kcc_min_median_pages: 100            # only convert TOMES (median pp/file >= this); skip chapter-based series
+kcc_cpus: "4"                        # cap CPU per conversion container (kcc is ~1 core/volume)
+kcc_priority_series:                 # convert these series first (actively-read titles)
+  - "L'Atelier des Sorciers"         # merged: the old case-variant "L'atelier" folder was folded into this one
+  - "Witch Watch"
+  - "Mär: Märchen Awakens Romance"
+kcc_ltr_series:                      # left-to-right western comics (default is RTL/manga)
+  - "Asterix"
+  - "Les Sisters"
+  - "Titeuf"
+kcc_grayscale_series: []             # series to force grayscale/B&W (default is color)
+# Author is no longer set here: KCC reads <Writer> from each archive's
+# ComicInfo.xml (populated by the komf role). See kcc-converter.py.j2.
+kcc_ntfy_url: "http://127.0.0.1:{{ ntfy_port }}"
+kcc_ntfy_topic: "comics-kobo"
+kcc_ntfy_token: ""                   # set in vault if desired

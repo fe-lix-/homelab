@@ -1,0 +1,169 @@
+#!/usr/bin/env python3
+"""KCC converter — turn /srv/comics CBZ/CBR into Kobo-Clara-Color-optimized
+KEPUBs in /srv/comics-kobo, for Komga's Kobo Sync. Incremental (skips already
+converted), priority-series first, capped per run so the full backfill spreads
+over nightly timer runs. Managed by Ansible (roles/kcc-converter) — do not edit
+on the host."""
+import argparse
+import re
+import statistics
+import subprocess
+import urllib.request
+import zipfile
+from pathlib import Path
+
+SOURCE = Path("{{ kcc_source_dir }}")
+OUTPUT = Path("{{ kcc_output_dir }}")
+IMAGE = "{{ kcc_image }}"
+PROFILE = "{{ kcc_profile }}"
+MAX_PER_RUN = {{ kcc_max_per_run }}
+CPUS = "{{ kcc_cpus }}"
+PRIORITY = {{ kcc_priority_series | to_json }}
+LTR = set({{ kcc_ltr_series | to_json }})
+GRAYSCALE = set({{ kcc_grayscale_series | to_json }})
+# Author is NOT passed via -a: KCC reads <Writer>/<Penciller> from each archive's
+# ComicInfo.xml natively when -a is omitted (comic2ebook.py getMetadata), falling
+# back to "KCC" only if absent. ComicInfo is the single source of truth, populated
+# by Komf. Passing -a would OVERRIDE ComicInfo, so we don't.
+NTFY_URL = "{{ kcc_ntfy_url }}"
+NTFY_TOPIC = "{{ kcc_ntfy_topic }}"
+NTFY_TOKEN = "{{ kcc_ntfy_token }}"
+
+EXTS = (".cbz", ".cbr")
+CONVERT_TIMEOUT = 1800  # 30 min per volume
+IMG_EXTS = (".jpg", ".jpeg", ".png", ".webp", ".gif", ".avif")
+# Only put TOMES on the Kobo, not chapter-fragments: skip any series whose median
+# pages-per-file is below this (chapters ~13-49pp; tomes ~150-250pp). Also keeps
+# the device fast — chapter-based series explode the book count.
+MIN_MEDIAN_PAGES = {{ kcc_min_median_pages }}
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def natkey(p):
+    """Natural sort key so volumes convert 1,2,…,9,10,11 (not 1,10,11,…,2)."""
+    return [int(t) if t.isdigit() else t.lower() for t in re.split(r"(\d+)", p.name)]
+
+
+def notify(text):
+    if not NTFY_URL or not NTFY_TOPIC:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{NTFY_URL}/{NTFY_TOPIC}", data=text.encode(), method="POST")
+        if NTFY_TOKEN:
+            req.add_header("Authorization", f"Bearer {NTFY_TOKEN}")
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        log(f"ntfy notify failed: {e}")
+
+
+def series_dirs():
+    """All series dirs, priority ones first (in configured order)."""
+    all_dirs = {d.name: d for d in SOURCE.iterdir() if d.is_dir()}
+    ordered = [all_dirs[n] for n in PRIORITY if n in all_dirs]
+    ordered += [d for n, d in sorted(all_dirs.items()) if n not in PRIORITY]
+    return ordered
+
+
+def out_path(series, src):
+    return OUTPUT / series.name / (src.stem + ".kepub.epub")
+
+
+def series_median_pages(series):
+    """Median image-pages-per-file across a sample of the series' archives.
+    Used to tell tomes (~200pp) from chapter-fragments (~40pp)."""
+    archives = sorted(p for p in series.iterdir()
+                      if p.suffix.lower() in EXTS and not p.name.startswith("._"))
+    if not archives:
+        return 0
+    sample = archives[::max(1, len(archives) // 5)][:5]
+    counts = []
+    for p in sample:
+        try:
+            with zipfile.ZipFile(p) as z:
+                counts.append(sum(1 for n in z.namelist()
+                                  if n.lower().endswith(IMG_EXTS)))
+        except Exception:
+            pass
+    return int(statistics.median(counts)) if counts else 0
+
+
+def convert(series, src):
+    out_series = OUTPUT / series.name
+    out_series.mkdir(parents=True, exist_ok=True)
+    # Use --mount (not -v): series folder names can contain colons
+    # (e.g. "Mär: Märchen Awakens Romance"), which break -v's host:container
+    # parsing ("too many colons"). --mount is comma-keyed and colon-safe.
+    args = [
+        "docker", "run", "--rm", "--cpus", CPUS,
+        "--mount", f"type=bind,source={series},target=/in,readonly",
+        "--mount", f"type=bind,source={out_series},target=/out",
+        IMAGE, "-p", PROFILE, "-f", "EPUB", "-u", "-o", "/out",
+    ]
+    if series.name not in LTR:
+        args.append("-m")               # manga right-to-left (default)
+    if series.name not in GRAYSCALE:
+        args += ["--forcecolor", "--eraserainbow"]   # color (default)
+    # No -a: let KCC read the author from the archive's ComicInfo.xml <Writer>.
+    args.append(f"/in/{src.name}")
+    log(f"Converting: {series.name}/{src.name}")
+    try:
+        r = subprocess.run(args, capture_output=True, text=True,
+                           timeout=CONVERT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        log("  TIMEOUT — skipping")
+        return False
+    if r.returncode != 0:
+        log(f"  FAILED (rc={r.returncode}): {r.stderr.strip()[-300:]}")
+        return False
+    if not out_path(series, src).exists():
+        log("  FAILED — no output produced")
+        return False
+    return True
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Convert /srv/comics tomes to Kobo KEPUBs")
+    parser.add_argument("--max", type=int, default=MAX_PER_RUN,
+                        help="Max new conversions this run (default from config; raise for a one-off full backfill)")
+    args = parser.parse_args()
+    max_per_run = args.max
+
+    if not SOURCE.is_dir():
+        log(f"Source {SOURCE} missing; nothing to do.")
+        return
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    converted = failed = 0
+    for series in series_dirs():
+        median = series_median_pages(series)
+        if median < MIN_MEDIAN_PAGES:
+            log(f"Skipping {series.name}: median {median}pp < {MIN_MEDIAN_PAGES} (chapter-based, not a tome)")
+            continue
+        for src in sorted(series.iterdir(), key=natkey):
+            if src.suffix.lower() not in EXTS:
+                continue
+            if src.name.startswith("._"):   # macOS AppleDouble junk
+                continue
+            if out_path(series, src).exists():
+                continue                     # already converted
+            if converted + failed >= max_per_run:
+                log(f"Reached max_per_run={max_per_run}; backfill continues next run.")
+                notify(f"KCC: converted {converted} new volume(s); more pending.")
+                return
+            if convert(series, src):
+                converted += 1
+            else:
+                failed += 1
+    msg = f"KCC: converted {converted} new volume(s)"
+    if failed:
+        msg += f", {failed} failed"
+    log("Done. " + msg)
+    if converted or failed:
+        notify(msg)
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Scrape a novelasligeras.net light-novel into one EPUB per volume.
+
+The site is Cloudflare-protected, so every page is fetched through ByParr
+(FlareSolverr-compatible). Extraction selectors mirror lightnovel-crawler's
+sources/es/novelasligeras.py. One EPUB per volume, with cover + author + series
+metadata so Komga/Kobo order them correctly.
+
+Run inside the lncrawl image (has ebooklib/bs4/requests) with host networking:
+  docker run --rm --network host \
+    -v /srv/books:/out -v /tmp/novel-scraper.py:/s.py:ro \
+    --entrypoint python ghcr.io/dipu-bd/lightnovel-crawler:latest \
+    /s.py --url <product-url> --volumes 1-7 --out /out
+"""
+import argparse
+import json
+import re
+import time
+import urllib.request
+from pathlib import Path
+
+from bs4 import BeautifulSoup
+from ebooklib import epub
+
+BYPARR = "{{ books_byparr_url }}"
+BYPARR_TIMEOUT = 120000
+DATE_RE_TMPL = r"/index\.php/\d{4}/\d{2}/\d{2}/"
+VOL_RE = re.compile(r"-vol(?:umen)?-(\d+)-")
+
+
+_CF = {"cookie": "", "ua": "Mozilla/5.0"}
+
+
+def byparr_solution(url, retries=3):
+    payload = json.dumps({"cmd": "request.get", "url": url, "maxTimeout": BYPARR_TIMEOUT}).encode()
+    last = None
+    for attempt in range(1, retries + 1):
+        try:
+            req = urllib.request.Request(BYPARR, data=payload, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=BYPARR_TIMEOUT // 1000 + 30) as r:
+                data = json.loads(r.read())
+            if data.get("status") == "ok":
+                return data["solution"]
+            last = RuntimeError(data.get("message", "byparr not ok"))
+        except Exception as e:
+            last = e
+        if attempt < retries:
+            time.sleep(5 * attempt)
+    raise RuntimeError(f"ByParr failed for {url}: {last}")
+
+
+def byparr_get(url, retries=3):
+    sol = byparr_solution(url, retries)
+    # Cache CF clearance cookie + UA so we can fetch binary assets (covers) that
+    # ByParr can't return as binary but plain urllib can with the cf_clearance cookie.
+    cookies = sol.get("cookies", [])
+    if cookies:
+        _CF["cookie"] = "; ".join(f"{c['name']}={c['value']}" for c in cookies if c.get("name"))
+        _CF["ua"] = sol.get("userAgent", _CF["ua"])
+    return sol.get("response", "")
+
+
+def fetch_soup(url):
+    return BeautifulSoup(byparr_get(url), "html.parser")
+
+
+def parse_volumes(spec, available):
+    """'1-7' or '1,3,5' or '1-3,7' -> sorted set, intersected with available."""
+    if not spec:
+        return available
+    want = set()
+    for part in spec.split(","):
+        part = part.strip()
+        if "-" in part:
+            a, b = part.split("-")
+            want.update(range(int(a), int(b) + 1))
+        elif part:
+            want.add(int(part))
+    return [v for v in available if v in want]
+
+
+def get_novel(url):
+    soup = fetch_soup(url)
+    title_el = soup.select_one("h1.product_title")
+    title = title_el.text.strip() if title_el else "Novela"
+    author_el = soup.select_one('tr.woocommerce-product-attributes-item--attribute_pa_escritor a[rel="tag"]')
+    author = author_el.text.strip() if author_el else ""
+    # per-volume covers from the product gallery, in order
+    covers = []
+    for a in soup.select(".woocommerce-product-gallery__image a"):
+        if a.get("href"):
+            covers.append(a["href"])
+
+    chapters, last_vol = [], 0
+    for a in soup.select(".wpb_wrapper a:not([id],[title],[href$='suscripciones/'],[href*='patreon'],[href*='paypal'])"):
+        href = a.get("href", "")
+        if not re.search(DATE_RE_TMPL, href):
+            continue
+        m = VOL_RE.search(href)
+        vol = int(m.group(1)) if m else last_vol
+        last_vol = vol
+        chapters.append({"vol": vol, "title": a.text.strip(), "url": href})
+    return {"title": title, "author": author, "covers": covers, "chapters": chapters}
+
+
+def extract_chapter(url, chapter_title=""):
+    soup = fetch_soup(url)
+    node = soup.select_one(".wpb_text_column > div:nth-child(1)")
+    if not node:
+        return None
+    # clean: drop scripts/styles, inline-styled button divs, nav links, ads
+    for bad in node.select("script, style, div[style], [id^=default-btn], .nav-links, noscript"):
+        bad.decompose()
+    skip = {"publicidad", "indice", "índice", "siguiente", "anterior"}
+    ct = chapter_title.lower().strip()
+    paras, body_started = [], False
+    for p in node.find_all(["p", "h1", "h2", "h3", "blockquote"]):
+        txt = p.get_text(" ", strip=True)
+        if not txt or txt.lower() in skip:
+            continue
+        # Skip the leading title/breadcrumb block the page repeats before the prose
+        # (the chapter title, "... (NL)", "Volumen N: ..."). Once real prose starts,
+        # keep everything.
+        if not body_started:
+            low = txt.lower()
+            if (low == ct or "(nl)" in low or re.match(r"^vol(umen|\.)?\s*\d", low)
+                    or low.startswith(("prólogo", "prologo", "epílogo", "epilogo", "capítulo", "capitulo"))) and len(txt) < 80:
+                continue
+            body_started = True
+        paras.append(f"<p>{epub_escape(txt)}</p>")
+    return "\n".join(paras) if paras else None
+
+
+def epub_escape(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def download(url):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": _CF["ua"],
+        "Referer": "https://novelasligeras.net/",
+        "Cookie": _CF["cookie"],
+    })
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return r.read()
+
+
+def build_epub(novel, vol, chapters, cover_url, out_dir):
+    book = epub.EpubBook()
+    series = novel.get("series") or re.sub(r"\s*\(NL\)\s*$", "", novel["title"]).strip()
+    vol_title = f"{series} - Volumen {vol}"
+    book.set_identifier(f"novelasligeras-{series}-v{vol}".lower().replace(" ", "-"))
+    book.set_title(vol_title)
+    book.set_language("es")
+    if novel["author"]:
+        book.add_author(novel["author"])
+    # Calibre series metadata so Komga/Kobo sort volumes
+    book.add_metadata("OPF", "belongs-to-collection", series, {"id": "series"})
+    book.add_metadata("OPF", "collection-type", "series", {"refines": "#series", "property": "collection-type"})
+    book.add_metadata("OPF", "group-position", str(vol), {"refines": "#series", "property": "group-position"})
+    book.add_metadata("calibre", "series", series)
+    book.add_metadata("calibre", "series_index", str(vol))
+
+    if cover_url:
+        try:
+            book.set_cover("cover.jpg", download(cover_url))
+        except Exception as e:
+            print(f"  cover failed: {e}")
+
+    spine = ["nav"]
+    toc = []
+    for i, ch in enumerate(chapters, 1):
+        body = extract_chapter(ch["url"], ch["title"])
+        if not body:
+            print(f"  !! ch '{ch['title']}' empty/failed")
+            body = "<p>--Capítulo no disponible--</p>"
+        c = epub.EpubHtml(title=ch["title"], file_name=f"ch{i:03d}.xhtml", lang="es")
+        c.content = f"<h2>{epub_escape(ch['title'])}</h2>\n{body}"
+        book.add_item(c)
+        spine.append(c)
+        toc.append(c)
+        print(f"  [{i}/{len(chapters)}] {ch['title'][:60]}")
+        time.sleep(0.5)
+
+    book.toc = toc
+    book.add_item(epub.EpubNcx())
+    book.add_item(epub.EpubNav())
+    book.spine = spine
+    # One folder per series so Komga groups the volumes as a single series.
+    series_folder = re.sub(r"[^\w\s.-]", "_", series)
+    dest = out_dir / series_folder
+    dest.mkdir(parents=True, exist_ok=True)
+    path = dest / f"Volumen {vol:02d}.epub"
+    epub.write_epub(str(path), book)
+    return path
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--url", required=True)
+    ap.add_argument("--volumes", default="", help="e.g. '1-7' or '1,3,5' (default: all)")
+    ap.add_argument("--title", default="", help="clean series name override (else site title)")
+    ap.add_argument("--out", default="/out")
+    args = ap.parse_args()
+
+    print(f"Fetching novel index: {args.url}")
+    novel = get_novel(args.url)
+    if args.title.strip():
+        novel["series"] = args.title.strip()
+    by_vol = {}
+    for ch in novel["chapters"]:
+        by_vol.setdefault(ch["vol"], []).append(ch)
+    available = sorted(by_vol)
+    targets = parse_volumes(args.volumes, available)
+    print(f"Novel: {novel['title']}")
+    print(f"Author: {novel['author']}  | volumes available: {available}")
+    print(f"Converting volumes: {targets}")
+
+    out_dir = Path(args.out)
+    done = 0
+    for vol in targets:
+        chs = by_vol[vol]
+        cover = novel["covers"][vol - 1] if vol - 1 < len(novel["covers"]) else None
+        print(f"\n=== Volumen {vol} ({len(chs)} chapters) ===")
+        path = build_epub(novel, vol, chs, cover, out_dir)
+        print(f"  -> {path.name}")
+        done += 1
+    print(f"\nDone: {done} volume(s) written to {out_dir}")
+
+
+if __name__ == "__main__":
+    main()

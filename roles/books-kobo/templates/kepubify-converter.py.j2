@@ -1,0 +1,105 @@
+#!/usr/bin/env python3
+"""kepubify converter — turn EPUB novels in {{ books_source_dir }} into
+Kobo-optimized KEPUBs in {{ books_kobo_dir }}, preserving the per-series folder
+structure, for Komga's Kobo Sync. Incremental (skips already-converted).
+Managed by Ansible (roles/books-kobo) — do not edit on the host."""
+import os
+import subprocess
+import urllib.request
+from pathlib import Path
+
+SOURCE = Path("{{ books_source_dir }}")
+OUTPUT = Path("{{ books_kobo_dir }}")
+KEPUBIFY = "{{ books_kepubify_bin }}"
+NTFY_URL = "{{ books_ntfy_url }}"
+NTFY_TOPIC = "{{ books_ntfy_topic }}"
+NTFY_TOKEN = "{{ books_ntfy_token }}"
+CONVERT_TIMEOUT = 600  # 10 min per book
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def notify(text):
+    if not NTFY_URL or not NTFY_TOPIC:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{NTFY_URL}/{NTFY_TOPIC}", data=text.encode(), method="POST")
+        if NTFY_TOKEN:
+            req.add_header("Authorization", f"Bearer {NTFY_TOKEN}")
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        log(f"ntfy notify failed: {e}")
+
+
+def out_path(src):
+    rel = src.relative_to(SOURCE)
+    return OUTPUT / rel.parent / (src.stem + ".kepub.epub")
+
+
+def make_group_readable(path):
+    """Output is written running as root; Komga (svc-media, in the comics-rw
+    group inherited via setgid on the output dir) needs group read, so kepubify's
+    default 0600 must be widened to 0664 (dirs to 2775)."""
+    try:
+        os.chmod(path, 0o664)
+        d = path.parent
+        while str(d).startswith(str(OUTPUT)):
+            os.chmod(d, 0o2775)
+            if d == OUTPUT:
+                break
+            d = d.parent
+    except OSError as e:
+        log(f"  chmod warn: {e}")
+
+
+def convert(src):
+    dst = out_path(src)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    log(f"Converting: {src.relative_to(SOURCE)}")
+    try:
+        r = subprocess.run(
+            [KEPUBIFY, "--output", str(dst), str(src)],
+            capture_output=True, text=True, timeout=CONVERT_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        log("  TIMEOUT — skipping")
+        return False
+    if r.returncode != 0:
+        log(f"  FAILED (rc={r.returncode}): {r.stderr.strip()[-300:]}")
+        return False
+    if not dst.exists():
+        log("  FAILED — no output produced")
+        return False
+    make_group_readable(dst)
+    return True
+
+
+def main():
+    if not SOURCE.is_dir():
+        log(f"Source {SOURCE} missing; nothing to do.")
+        return
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+    converted = failed = 0
+    for src in sorted(SOURCE.rglob("*.epub")):
+        if src.name.startswith("._"):
+            continue
+        if src.suffix.lower() == ".epub" and src.name.endswith(".kepub.epub"):
+            continue  # already a kepub somehow
+        if out_path(src).exists():
+            continue  # already converted
+        if convert(src):
+            converted += 1
+        else:
+            failed += 1
+    msg = f"kepubify: converted {converted} new book(s)"
+    if failed:
+        msg += f", {failed} failed"
+    log("Done. " + msg)
+    if converted or failed:
+        notify(msg)
+
+
+if __name__ == "__main__":
+    main()

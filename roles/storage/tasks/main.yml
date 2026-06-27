@@ -80,12 +80,49 @@
     group: comics-rw
     mode: "2775"
 
+# Kobo-optimized KEPUB library produced by the kcc-converter role (regenerable
+# from /srv/comics, so NOT backed up). Komga reads it as a second library.
+- name: Ensure /srv/comics-kobo ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/comics-kobo
+    state: directory
+    owner: svc-media
+    group: comics-rw
+    mode: "2775"
+
 - name: Ensure /srv/uploads/mangas ownership and setgid mode
   ansible.builtin.file:
     path: /srv/uploads/mangas
     state: directory
     owner: smbguest
     group: comics-rw
+    mode: "2775"
+
+# Light-novel EPUBs (scraper output / drop folder) and the Kobo-optimized KEPUB
+# library (kepubify output, regenerable → NOT backed up). Komga reads books-kobo
+# as a library synced to the Kobo Clara.
+- name: Ensure /srv/books ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/books
+    state: directory
+    owner: svc-media
+    group: comics-rw
+    mode: "2775"
+
+- name: Ensure /srv/books-kobo ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/books-kobo
+    state: directory
+    owner: svc-media
+    group: comics-rw
+    mode: "2775"
+
+- name: Ensure /srv/media/ebooks ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/media/ebooks
+    state: directory
+    owner: svc-media
+    group: media-rw
     mode: "2775"
 
 - name: Ensure /srv/photos ownership and mode
