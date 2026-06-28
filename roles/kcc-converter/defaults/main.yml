@@ -23,3 +23,12 @@ kcc_grayscale_series: []             # series to force grayscale/B&W (default is
 kcc_ntfy_url: "http://127.0.0.1:{{ ntfy_port }}"
 kcc_ntfy_topic: "comics-kobo"
 kcc_ntfy_token: ""                   # set in vault if desired
+
+# Repack pass: new CBR deliveries are repacked to CBZ first (the tome-detector
+# can't read RAR, and Komf/ComicInfo need CBZ). Uses the kcc-rar image's 7z.
+kcc_quarantine_dir: /opt/cbr-quarantine
+# Rescan pass: after converting, scan Komga libraries so new source + KEPUBs
+# index immediately and reach the Kobo without waiting for Komga's hourly scan.
+kcc_komga_url: "http://127.0.0.1:{{ komga_port }}"
+kcc_komga_user: "{{ komga_admin_email }}"
+kcc_komga_password: "{{ komga_admin_password }}"

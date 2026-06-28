@@ -1,6 +1,9 @@
 [Unit]
 Description=Manga Scheduler — move next series batch to Komga
 After=network.target
+# After a successful delivery, run the full Kobo transformation (repack CBR,
+# convert tomes to KEPUB, rescan Komga) so new manga reach the Kobo automatically.
+OnSuccess=kcc-converter.service
 
 [Service]
 Type=oneshot

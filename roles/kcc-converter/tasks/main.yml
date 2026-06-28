@@ -29,6 +29,22 @@
     state: present
     force_source: "{{ kcc_dockerfile.changed }}"
 
+- name: Deploy CBR→CBZ repack script (run inside the kcc-rar image)
+  ansible.builtin.copy:
+    src: repack-cbr-to-cbz.py
+    dest: "{{ kcc_data_dir }}/repack-cbr-to-cbz.py"
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Create CBR quarantine directory
+  ansible.builtin.file:
+    path: "{{ kcc_quarantine_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
 - name: Deploy KCC converter script
   ansible.builtin.template:
     src: kcc-converter.py.j2

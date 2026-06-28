@@ -187,7 +187,7 @@ def build_epub(novel, vol, chapters, cover_url, out_dir):
     book.add_item(epub.EpubNav())
     book.spine = spine
     # One folder per series so Komga groups the volumes as a single series.
-    series_folder = re.sub(r"[^\w\s.-]", "_", series)
+    series_folder = re.sub(r"[^\w\s.()-]", "_", series).strip()
     dest = out_dir / series_folder
     dest.mkdir(parents=True, exist_ok=True)
     path = dest / f"Volumen {vol:02d}.epub"

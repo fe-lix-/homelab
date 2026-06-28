@@ -5,6 +5,8 @@ converted), priority-series first, capped per run so the full backfill spreads
 over nightly timer runs. Managed by Ansible (roles/kcc-converter) — do not edit
 on the host."""
 import argparse
+import base64
+import json
 import re
 import statistics
 import subprocess
@@ -14,6 +16,11 @@ from pathlib import Path
 
 SOURCE = Path("{{ kcc_source_dir }}")
 OUTPUT = Path("{{ kcc_output_dir }}")
+QUARANTINE = Path("{{ kcc_quarantine_dir }}")
+DATA_DIR = Path("{{ kcc_data_dir }}")
+KOMGA_URL = "{{ kcc_komga_url }}"
+KOMGA_USER = "{{ kcc_komga_user }}"
+KOMGA_PASSWORD = "{{ kcc_komga_password }}"
 IMAGE = "{{ kcc_image }}"
 PROFILE = "{{ kcc_profile }}"
 MAX_PER_RUN = {{ kcc_max_per_run }}
@@ -125,6 +132,60 @@ def convert(series, src):
     return True
 
 
+def repack_cbr():
+    """Repack any .cbr (RAR) in SOURCE to .cbz via the kcc-rar image's 7z, so the
+    tome-detector (zip-based) and Komf/ComicInfo see them. Returns repacked count."""
+    if not any(SOURCE.rglob("*.cbr")):
+        return 0
+    QUARANTINE.mkdir(parents=True, exist_ok=True)
+    args = [
+        "docker", "run", "--rm",
+        "--mount", f"type=bind,source={SOURCE},target=/work",
+        "--mount", f"type=bind,source={QUARANTINE},target=/quarantine",
+        "--mount", f"type=bind,source={DATA_DIR}/repack-cbr-to-cbz.py,target=/repack.py,readonly",
+        "--entrypoint", "/opt/venv/bin/python3", IMAGE, "/repack.py",
+    ]
+    log("Repacking CBR → CBZ...")
+    r = subprocess.run(args, capture_output=True, text=True, timeout=CONVERT_TIMEOUT)
+    out = (r.stdout or "") + (r.stderr or "")
+    for line in out.splitlines():
+        if line.strip().startswith("done:") or "repacked" in line.lower():
+            log("  " + line.strip())
+    m = re.search(r"done:\s*(\d+)\s+repacked", out)
+    return int(m.group(1)) if m else 0
+
+
+def normalize_source_perms():
+    """Ensure Komga (svc-media, in comics-rw) can read every source file —
+    repacked/manually-dropped files may lack group-read. Only touches outliers."""
+    subprocess.run(["find", str(SOURCE), "-type", "f", "!", "-perm", "-g=r",
+                    "-exec", "chmod", "g+r", "{}", "+"], capture_output=True)
+
+
+def komga_scan_all():
+    """Trigger a scan of every Komga library so new source CBZ + new KEPUBs index
+    immediately (so delivered manga reach the Kobo without waiting for the hourly scan)."""
+    if not KOMGA_USER or not KOMGA_PASSWORD:
+        log("komga creds unset; skipping rescan (hourly scan will catch up).")
+        return
+    auth = base64.b64encode(f"{KOMGA_USER}:{KOMGA_PASSWORD}".encode()).decode()
+    hdr = {"Authorization": f"Basic {auth}"}
+    try:
+        req = urllib.request.Request(f"{KOMGA_URL}/api/v1/libraries", headers=hdr)
+        libs = json.load(urllib.request.urlopen(req, timeout=30))
+    except Exception as e:
+        log(f"komga rescan: could not list libraries: {e}")
+        return
+    for lib in libs:
+        try:
+            req = urllib.request.Request(
+                f"{KOMGA_URL}/api/v1/libraries/{lib['id']}/scan", method="POST", headers=hdr)
+            urllib.request.urlopen(req, timeout=30)
+            log(f"  komga scan triggered: {lib['name']}")
+        except Exception as e:
+            log(f"  komga scan '{lib['name']}' failed: {e}")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Convert /srv/comics tomes to Kobo KEPUBs")
     parser.add_argument("--max", type=int, default=MAX_PER_RUN,
@@ -136,6 +197,10 @@ def main():
         log(f"Source {SOURCE} missing; nothing to do.")
         return
     OUTPUT.mkdir(parents=True, exist_ok=True)
+
+    repacked = repack_cbr()
+    normalize_source_perms()
+
     converted = failed = 0
     for series in series_dirs():
         median = series_median_pages(series)
@@ -151,17 +216,23 @@ def main():
                 continue                     # already converted
             if converted + failed >= max_per_run:
                 log(f"Reached max_per_run={max_per_run}; backfill continues next run.")
+                komga_scan_all()
                 notify(f"KCC: converted {converted} new volume(s); more pending.")
                 return
             if convert(series, src):
                 converted += 1
             else:
                 failed += 1
+    # Index new source CBZ + new KEPUBs so delivered manga reach the Kobo now.
+    if converted or repacked:
+        komga_scan_all()
     msg = f"KCC: converted {converted} new volume(s)"
+    if repacked:
+        msg += f", repacked {repacked} CBR"
     if failed:
         msg += f", {failed} failed"
     log("Done. " + msg)
-    if converted or failed:
+    if converted or failed or repacked:
         notify(msg)
 
 

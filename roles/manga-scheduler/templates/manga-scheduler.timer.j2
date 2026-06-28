@@ -1,8 +1,8 @@
 [Unit]
-Description=Run manga-scheduler every 2 days
+Description=Run manga-scheduler twice daily
 
 [Timer]
-OnUnitActiveSec=2d
+OnCalendar={{ manga_scheduler_schedule }}
 Persistent=true
 
 [Install]
