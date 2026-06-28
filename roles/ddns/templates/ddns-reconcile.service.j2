@@ -1,0 +1,13 @@
+[Unit]
+Description=Dynamic DNS — forced reconcile (re-PUT all anchor records)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 {{ ddns_data_dir }}/ddns.py --force
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths={{ ddns_data_dir }}

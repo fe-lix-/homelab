@@ -1,0 +1,9 @@
+[Unit]
+Description=Poll WAN IP and update DDNS records
+
+[Timer]
+OnCalendar={{ ddns_schedule }}
+Persistent=false
+
+[Install]
+WantedBy=timers.target

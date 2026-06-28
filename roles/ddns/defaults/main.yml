@@ -1,0 +1,29 @@
+---
+ddns_data_dir: /opt/ddns
+ddns_state_file: "{{ ddns_data_dir }}/last_ip"
+
+# Gandi LiveDNS v5 REST API. Reuse the certbot Personal Access Token (in vault).
+ddns_api_base: "https://api.gandi.net/v5/livedns"
+ddns_api_key: "{{ certbot_gandi_api_key }}"
+
+# A "anchor" records to keep pointed at the home WAN IP. EMPTY here (public role)
+# — the real zones/names live in inventories group_vars (private repo). Each entry
+# is { zone: <registrable domain>, name: <record name or "@"> }. Everything else
+# CNAMEs to an anchor, so only these need updating.
+ddns_records: []
+
+ddns_ttl: 300                          # low TTL on the changing records = fast propagation
+
+# WAN IPv4 discovery (tried in order; first valid public IPv4 wins).
+ddns_ip_providers:
+  - "https://api.ipify.org"
+  - "https://ifconfig.me/ip"
+  - "https://icanhazip.com"
+ddns_http_timeout: 10
+
+ddns_schedule: "*:0/5"                 # poll every 5 min (cache-compare; Gandi only on change)
+ddns_reconcile_schedule: "hourly"      # forced re-PUT to heal drift
+
+ddns_ntfy_url: "http://127.0.0.1:{{ ntfy_port }}"
+ddns_ntfy_topic: "ddns"
+ddns_ntfy_token: ""                    # set in vault if the topic is protected

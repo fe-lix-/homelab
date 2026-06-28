@@ -80,6 +80,8 @@
       tags: books-kobo
     - role: ntfy
       tags: ntfy
+    - role: ddns
+      tags: ddns
     - role: vaultwarden
       tags: vaultwarden
     - role: screentime

@@ -1,0 +1,153 @@
+#!/usr/bin/env python3
+"""Dynamic DNS updater — keep Gandi LiveDNS A records pointed at the home WAN IP.
+Polls the WAN IP, caches it, and on change PUTs each configured anchor record via
+the Gandi LiveDNS v5 REST API. Everything else CNAMEs to an anchor, so only the
+anchors need updating. Managed by Ansible (roles/ddns) — do not edit on host."""
+import argparse
+import ipaddress
+import json
+import sys
+import urllib.request
+import urllib.error
+from pathlib import Path
+
+API_BASE = "{{ ddns_api_base }}"
+API_KEY = "{{ ddns_api_key }}"
+TTL = {{ ddns_ttl }}
+STATE_FILE = Path("{{ ddns_state_file }}")
+RECORDS = {{ ddns_records | to_json }}          # [{"zone":..,"name":..}, ...]
+PROVIDERS = {{ ddns_ip_providers | to_json }}
+TIMEOUT = {{ ddns_http_timeout }}
+NTFY_URL = "{{ ddns_ntfy_url }}"
+NTFY_TOPIC = "{{ ddns_ntfy_topic }}"
+NTFY_TOKEN = "{{ ddns_ntfy_token }}"
+
+# PAT auth. First-run check: a 401/403 means the token is a legacy API key and
+# wants "Apikey <key>" here instead of "Bearer <token>".
+AUTH_HEADER = f"Bearer {API_KEY}"
+
+
+def log(msg):
+    print(msg, flush=True)
+
+
+def notify(text):
+    if not NTFY_URL or not NTFY_TOPIC:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{NTFY_URL}/{NTFY_TOPIC}", data=text.encode(), method="POST")
+        if NTFY_TOKEN:
+            req.add_header("Authorization", f"Bearer {NTFY_TOKEN}")
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        log(f"ntfy notify failed: {e}")
+
+
+def valid_public_ipv4(s):
+    try:
+        ip = ipaddress.ip_address(s.strip())
+    except ValueError:
+        return None
+    if ip.version != 4 or not ip.is_global:
+        return None
+    return str(ip)
+
+
+def fetch_wan_ip():
+    for url in PROVIDERS:
+        try:
+            with urllib.request.urlopen(url, timeout=TIMEOUT) as r:
+                ip = valid_public_ipv4(r.read().decode())
+                if ip:
+                    log(f"WAN IP {ip} (via {url})")
+                    return ip
+                log(f"  {url} returned invalid IP, trying next")
+        except Exception as e:
+            log(f"  {url} failed: {e}")
+    return None
+
+
+def read_cache():
+    try:
+        return STATE_FILE.read_text().strip() or None
+    except FileNotFoundError:
+        return None
+
+
+def write_cache(ip):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(ip + "\n")
+
+
+def put_record(zone, name, ip):
+    url = f"{API_BASE}/domains/{zone}/records/{name}/A"
+    body = json.dumps({"rrset_ttl": TTL, "rrset_values": [ip]}).encode()
+    req = urllib.request.Request(url, data=body, method="PUT")
+    req.add_header("Authorization", AUTH_HEADER)
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as r:
+            log(f"  PUT {name}.{zone} A {ip} -> {r.status}")
+            return True
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode(errors="replace")[:300]
+        log(f"  PUT {name}.{zone} FAILED {e.code}: {detail}")
+        return False
+    except Exception as e:
+        log(f"  PUT {name}.{zone} FAILED: {e}")
+        return False
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Update Gandi A records to current WAN IP")
+    ap.add_argument("--force", action="store_true",
+                    help="re-PUT all records even if WAN == cache (drift reconcile)")
+    args = ap.parse_args()
+
+    if not RECORDS:
+        log("ddns_records empty; nothing to do.")
+        return 0
+
+    wan = fetch_wan_ip()
+    if not wan:
+        msg = "DDNS: could not determine WAN IP from any provider; aborting (cache untouched)."
+        log(msg)
+        notify(msg)
+        return 1
+
+    cached = read_cache()
+    changed = (cached != wan)
+
+    if not changed and not args.force:
+        log(f"WAN IP unchanged ({wan}); no Gandi calls.")
+        return 0
+
+    if not changed and args.force:
+        reason = "forced reconcile"
+    elif cached is None:
+        reason = "first run / empty cache"
+    else:
+        reason = f"changed {cached} -> {wan}"
+    log(f"Updating {len(RECORDS)} record(s): {reason}")
+
+    failures = []
+    for rec in RECORDS:
+        if not put_record(rec["zone"], rec["name"], wan):
+            failures.append(f'{rec["name"]}.{rec["zone"]}')
+
+    if failures:
+        msg = f"DDNS: {len(failures)}/{len(RECORDS)} record(s) failed to update to {wan}: {', '.join(failures)}"
+        log(msg)
+        notify(msg)
+        return 1
+
+    write_cache(wan)
+    log(f"All {len(RECORDS)} record(s) now {wan}.")
+    if changed:
+        notify(f"DDNS: WAN IP {cached or '(none)'} -> {wan}; updated {len(RECORDS)} record(s).")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

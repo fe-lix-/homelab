@@ -1,0 +1,50 @@
+---
+- name: Create ddns data directory
+  ansible.builtin.file:
+    path: "{{ ddns_data_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: Deploy ddns updater script
+  ansible.builtin.template:
+    src: ddns.py.j2
+    dest: "{{ ddns_data_dir }}/ddns.py"
+    owner: root
+    group: root
+    mode: "0700"            # embeds the Gandi PAT
+  no_log: true
+
+- name: Deploy ddns systemd units
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "/etc/systemd/system/{{ item }}"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - ddns.service
+    - ddns.timer
+    - ddns-reconcile.service
+    - ddns-reconcile.timer
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start ddns timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - ddns.timer
+    - ddns-reconcile.timer
+
+# Run once now so a WAN-IP mismatch is corrected at deploy time (empty cache on
+# first deploy => first run PUTs the anchors).
+- name: Run ddns updater once now
+  ansible.builtin.systemd:
+    name: ddns.service
+    state: started
