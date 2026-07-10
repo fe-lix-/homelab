@@ -186,21 +186,9 @@ def komga_scan_all():
             log(f"  komga scan '{lib['name']}' failed: {e}")
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Convert /srv/comics tomes to Kobo KEPUBs")
-    parser.add_argument("--max", type=int, default=MAX_PER_RUN,
-                        help="Max new conversions this run (default from config; raise for a one-off full backfill)")
-    args = parser.parse_args()
-    max_per_run = args.max
-
-    if not SOURCE.is_dir():
-        log(f"Source {SOURCE} missing; nothing to do.")
-        return
-    OUTPUT.mkdir(parents=True, exist_ok=True)
-
-    repacked = repack_cbr()
-    normalize_source_perms()
-
+def convert_pass(budget):
+    """One walk over all series, converting up to `budget` new tomes.
+    Returns (converted, failed, hit_cap)."""
     converted = failed = 0
     for series in series_dirs():
         median = series_median_pages(series)
@@ -214,25 +202,60 @@ def main():
                 continue
             if out_path(series, src).exists():
                 continue                     # already converted
-            if converted + failed >= max_per_run:
-                log(f"Reached max_per_run={max_per_run}; backfill continues next run.")
-                komga_scan_all()
-                notify(f"KCC: converted {converted} new volume(s); more pending.")
-                return
+            if converted + failed >= budget:
+                return converted, failed, True
             if convert(series, src):
                 converted += 1
             else:
                 failed += 1
+    return converted, failed, False
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Convert /srv/comics tomes to Kobo KEPUBs")
+    parser.add_argument("--max", type=int, default=MAX_PER_RUN,
+                        help="Max new conversions this run (default from config; raise for a one-off full backfill)")
+    args = parser.parse_args()
+    max_per_run = args.max
+
+    if not SOURCE.is_dir():
+        log(f"Source {SOURCE} missing; nothing to do.")
+        return
+    OUTPUT.mkdir(parents=True, exist_ok=True)
+
+    # Sweep loop: repeat repack+convert until a pass finds nothing new. This makes
+    # the run robust to content delivered WHILE it's running — e.g. two manual
+    # "Deliver Now" in quick succession, where the 2nd delivery's OnSuccess trigger
+    # is dropped (this oneshot can't overlap) and the in-flight run had already
+    # walked past that series. The re-sweep catches it instead of waiting for 02:00.
+    MAX_SWEEPS = 5
+    total_conv = total_repack = total_fail = 0
+    hit_cap = False
+    for sweep in range(MAX_SWEEPS):
+        repacked = repack_cbr()
+        normalize_source_perms()
+        conv, fail, hit_cap = convert_pass(max_per_run - total_conv)
+        total_conv += conv
+        total_repack += repacked
+        total_fail += fail
+        if hit_cap:
+            log(f"Reached max_per_run={max_per_run}; backfill continues next run.")
+            break
+        if conv == 0 and repacked == 0:
+            break                            # stable — nothing new appeared
+
     # Index new source CBZ + new KEPUBs so delivered manga reach the Kobo now.
-    if converted or repacked:
+    if total_conv or total_repack:
         komga_scan_all()
-    msg = f"KCC: converted {converted} new volume(s)"
-    if repacked:
-        msg += f", repacked {repacked} CBR"
-    if failed:
-        msg += f", {failed} failed"
+    msg = f"KCC: converted {total_conv} new volume(s)"
+    if total_repack:
+        msg += f", repacked {total_repack} CBR"
+    if total_fail:
+        msg += f", {total_fail} failed"
+    if hit_cap:
+        msg += "; more pending"
     log("Done. " + msg)
-    if converted or failed or repacked:
+    if total_conv or total_fail or total_repack:
         notify(msg)
 
 
