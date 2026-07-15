@@ -40,6 +40,22 @@
     group: root
     mode: "0700"
 
+- name: Generate kids-mode magic-link key (once; never regenerated)
+  # Short (12 hex chars) so it's typeable once on a Kobo's on-screen keyboard;
+  # ample for a LAN-only, low-stakes page. Delete the file + re-run to rotate.
+  ansible.builtin.shell: "umask 077 && openssl rand -hex 6 > {{ manga_scheduler_data_dir }}/kids-key.txt"
+  args:
+    creates: "{{ manga_scheduler_data_dir }}/kids-key.txt"
+
+- name: Deploy token-grant key (from vault; shared with the Home Assistant rest_command)
+  ansible.builtin.copy:
+    content: "{{ vault_manga_scheduler_grant_key }}\n"
+    dest: "{{ manga_scheduler_data_dir }}/grant-key.txt"
+    owner: root
+    group: root
+    mode: "0600"
+  no_log: true
+
 - name: Create manga-downloader staging directory
   ansible.builtin.file:
     path: "{{ manga_downloader_staging_dir }}"
@@ -85,11 +101,11 @@
 - name: Flush handlers
   ansible.builtin.meta: flush_handlers
 
-- name: Enable and start manga-scheduler timer
+- name: Disable manga-scheduler timer (deliveries are token-driven via the UI, not automatic)
   ansible.builtin.systemd:
     name: manga-scheduler.timer
-    enabled: true
-    state: started
+    enabled: false
+    state: stopped
 
 - name: Deploy manga-scheduler UI server
   ansible.builtin.template:

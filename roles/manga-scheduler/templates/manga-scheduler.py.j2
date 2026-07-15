@@ -2,6 +2,8 @@
 """Manga Scheduler — drip-feed manga series from uploads into Komga library."""
 
 import argparse
+import datetime
+import fcntl
 import json
 import os
 import re
@@ -19,10 +21,9 @@ UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
 COMICS_DIR = Path("{{ manga_scheduler_comics_dir }}")
 DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
 TARGET_PAGES = {{ manga_scheduler_target_pages }}
-STATE_FILE = DATA_DIR / "state.json"
-PENDING_FILE = DATA_DIR / "pending.txt"
-TRIGGER_USER_FILE = DATA_DIR / "trigger-user.txt"
-SCHEDULE_FILE = DATA_DIR / "schedule.json"
+QUEUE_FILE = DATA_DIR / "queue.json"
+WORKER_LOCK = DATA_DIR / "worker.lock"
+TOKENS_FILE = DATA_DIR / "tokens.json"
 KOMGA_URL = "http://127.0.0.1:{{ komga_port }}"
 KOMGA_USER = "{{ komga_admin_email }}"
 KOMGA_PASSWORD = "{{ komga_admin_password }}"
@@ -75,43 +76,6 @@ def discover_series(upload_dir: Path) -> dict[str, list[Path]]:
         series[name] = sorted(series[name], key=natural_sort_key)
 
     return series
-
-
-def load_state() -> dict:
-    if STATE_FILE.exists():
-        with STATE_FILE.open() as f:
-            return json.load(f)
-    return {"series_order": [], "current_index": 0}
-
-
-def save_state(state: dict, dry_run: bool) -> None:
-    if dry_run:
-        print(f"[dry-run] Would save state: {json.dumps(state)}")
-        return
-    with STATE_FILE.open("w") as f:
-        json.dump(state, f, indent=2)
-
-
-def update_series_order(state: dict, discovered: dict) -> list[str]:
-    """Keep known series still present, append newly discovered ones."""
-    known = [s for s in state["series_order"] if s in discovered]
-    new = [s for s in discovered if s not in set(known)]
-    return known + new
-
-
-def pick_series(series_order: list[str], current_index: int, discovered: dict) -> tuple[int, str | None]:
-    """Advance index (mod len), skipping series with no files. Returns (new_index, name)."""
-    if not series_order:
-        return current_index, None
-
-    n = len(series_order)
-    for offset in range(n):
-        idx = (current_index + offset) % n
-        name = series_order[idx]
-        if name in discovered and discovered[name]:
-            return idx, name
-
-    return current_index, None
 
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
@@ -249,33 +213,126 @@ def scan_komga(dry_run: bool) -> None:
         print(f"Warning: Komga scan failed: {exc}", file=sys.stderr)
 
 
-def load_schedule() -> list[str]:
-    """Load the active series list. Empty list means all series are active."""
-    if SCHEDULE_FILE.exists():
+def _refund_token(user: str) -> None:
+    """Return one token to a member whose paid delivery could not be fulfilled.
+    Mirrors the UI's refund() but stands alone so the worker never loses a spent
+    token when a queued request turns out to be undeliverable."""
+    TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    f = open(TOKENS_FILE, "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        raw = f.read()
         try:
-            data = json.loads(SCHEDULE_FILE.read_text())
-            return data.get("active_series", [])
-        except (json.JSONDecodeError, OSError):
-            pass
-    return []
+            data = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            data = {}
+        data.setdefault("users", {})
+        rec = data["users"].setdefault(
+            user, {"balance": 0, "last_grant": datetime.date.today().isoformat()}
+        )
+        rec["balance"] = rec.get("balance", 0) + 1
+        f.seek(0)
+        f.truncate()
+        json.dump(data, f, indent=2)
+        f.flush()
+    finally:
+        fcntl.flock(f, fcntl.LOCK_UN)
+        f.close()
 
 
-def consume_pending() -> str | None:
-    """Read and delete the pending series file set by the UI. Returns series name or None."""
-    if PENDING_FILE.exists():
-        name = PENDING_FILE.read_text().strip()
-        PENDING_FILE.unlink()
-        return name or None
-    return None
+def deliver_one(item: dict, upload_dir: Path, comics_dir: Path, dry_run: bool) -> bool:
+    """Deliver one queued request (one ~TARGET_PAGES batch of a series). Never
+    raises: a charged request that cannot be fulfilled is refunded so a spent
+    token is never lost. Returns True iff a batch was actually moved."""
+    series = item.get("series", "")
+    user = item.get("user") or "Scheduled"
+    charged = bool(item.get("charged"))
+
+    discovered = discover_series(upload_dir)
+    files = discovered.get(series)
+    if not files:
+        print(f"Series {series!r} not available (empty or removed). Skipping.", file=sys.stderr)
+        if charged and not dry_run:
+            _refund_token(user)
+            print(f"Refunded 1 token to {user} (undeliverable).")
+        return False
+
+    try:
+        batch = files_to_move(files, TARGET_PAGES)
+        total_pages = sum(count_pages(f) for f in batch)
+        print(f"Series: {series!r} ({len(files)} files remaining)")
+        print(f"Moving {len(batch)} file(s) (~{total_pages} pages)")
+        move_files(batch, series, comics_dir, upload_dir, dry_run)
+        if not dry_run:
+            notify(
+                f"📚 {series}",
+                f"{len(batch)} file(s) delivered (~{total_pages} pages)\n"
+                f"{len(files) - len(batch)} file(s) remaining\n"
+                f"Triggered by: {user}",
+                tags="books",
+            )
+        print("Done.")
+        return True
+    except Exception as exc:
+        print(f"Error delivering {series!r}: {exc}", file=sys.stderr)
+        if charged and not dry_run:
+            _refund_token(user)
+            print(f"Refunded 1 token to {user} (delivery failed).")
+        return False
 
 
-def consume_trigger_user() -> str:
-    """Read and delete the trigger user file. Returns user name or 'Scheduled'."""
-    if TRIGGER_USER_FILE.exists():
-        user = TRIGGER_USER_FILE.read_text().strip()
-        TRIGGER_USER_FILE.unlink()
-        return user or "Scheduled"
-    return "Scheduled"
+def drain_queue(upload_dir: Path, comics_dir: Path, dry_run: bool) -> None:
+    """Drain the delivery queue, one series per pop, until it is empty.
+
+    Only one worker drains at a time (WORKER_LOCK, taken non-blocking). The
+    hand-off is race-free: when the queue is found empty the worker releases
+    WORKER_LOCK *before* the queue lock. A producer must hold the queue lock to
+    append, so anything enqueued after our empty check is guaranteed to see
+    WORKER_LOCK already free and can start a fresh worker. No queued request is
+    ever dropped — even when systemd coalesces the `systemctl start` that woke
+    us into an already-running run."""
+    wlock = open(WORKER_LOCK, "w")
+    try:
+        fcntl.flock(wlock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("Another delivery worker is active; it will drain the queue. Exiting.")
+        wlock.close()
+        return
+
+    delivered_any = False
+    while True:
+        qf = open(QUEUE_FILE, "a+")
+        fcntl.flock(qf, fcntl.LOCK_EX)
+        qf.seek(0)
+        raw = qf.read()
+        try:
+            queue = json.loads(raw) if raw.strip() else []
+        except json.JSONDecodeError:
+            queue = []
+
+        if not queue:
+            # Hand off — release order matters (see docstring): worker lock first.
+            fcntl.flock(wlock, fcntl.LOCK_UN)
+            wlock.close()
+            fcntl.flock(qf, fcntl.LOCK_UN)
+            qf.close()
+            break
+
+        item = queue.pop(0)
+        qf.seek(0)
+        qf.truncate()
+        json.dump(queue, qf, indent=2)
+        qf.flush()
+        fcntl.flock(qf, fcntl.LOCK_UN)
+        qf.close()
+
+        if deliver_one(item, upload_dir, comics_dir, dry_run):
+            delivered_any = True
+
+    # One library scan covers every batch moved this drain.
+    if delivered_any:
+        scan_komga(dry_run)
 
 
 def main() -> None:
@@ -283,7 +340,9 @@ def main() -> None:
     parser.add_argument("--dry-run", action="store_true", help="Print actions without executing")
     parser.add_argument("--upload-dir", type=Path, default=UPLOAD_DIR, help="Override upload directory")
     parser.add_argument("--comics-dir", type=Path, default=COMICS_DIR, help="Override comics destination directory")
-    parser.add_argument("--series", metavar="NAME", help="Deliver this series now instead of the next round-robin pick")
+    parser.add_argument("--series", metavar="NAME",
+                        help="Deliver this one series now, bypassing the queue "
+                             "(testing/admin CLI; no token accounting)")
     args = parser.parse_args()
 
     upload_dir: Path = args.upload_dir
@@ -293,72 +352,15 @@ def main() -> None:
         print(f"Upload directory does not exist: {upload_dir}", file=sys.stderr)
         sys.exit(1)
 
-    discovered = discover_series(upload_dir)
-    if not discovered:
-        print("No series found in upload directory. Nothing to do.")
-        sys.exit(0)
+    if args.series:
+        # Direct one-shot delivery — manual/admin runs and tests, no queue.
+        if deliver_one({"series": args.series, "user": "CLI", "charged": False},
+                       upload_dir, comics_dir, args.dry_run):
+            scan_komga(args.dry_run)
+        return
 
-    state = load_state()
-    series_order = update_series_order(state, discovered)
-
-    if not series_order:
-        print("No series to schedule. Nothing to do.")
-        sys.exit(0)
-
-    current_index = state.get("current_index", 0) % max(len(series_order), 1)
-
-    # Determine which series to deliver: CLI flag > pending file > round-robin
-    trigger_user = consume_trigger_user()
-    forced_series = args.series or consume_pending()
-    if forced_series:
-        if forced_series not in discovered:
-            print(f"Series {forced_series!r} not found in upload directory.", file=sys.stderr)
-            sys.exit(1)
-        chosen_series = forced_series
-        # Find its index so we can advance past it for the next auto-run
-        chosen_index = series_order.index(forced_series) if forced_series in series_order else current_index
-    else:
-        # Apply schedule filter: active series first, fallback to all
-        active_series = load_schedule()
-        if active_series:
-            filtered = {s: files for s, files in discovered.items() if s in active_series}
-            if filtered:
-                chosen_index, chosen_series = pick_series(series_order, current_index, filtered)
-            else:
-                # All active series exhausted — fall back to full list
-                chosen_index, chosen_series = pick_series(series_order, current_index, discovered)
-        else:
-            chosen_index, chosen_series = pick_series(series_order, current_index, discovered)
-
-    if chosen_series is None:
-        print("All series are empty. Nothing to do.")
-        sys.exit(0)
-
-    files = discovered[chosen_series]
-    batch = files_to_move(files, TARGET_PAGES)
-
-    total_pages = sum(count_pages(f) for f in batch)
-    print(f"Series: {chosen_series!r} ({len(files)} files remaining)")
-    print(f"Moving {len(batch)} file(s) (~{total_pages} pages)")
-
-    move_files(batch, chosen_series, comics_dir, upload_dir, args.dry_run)
-    scan_komga(args.dry_run)
-
-    if not args.dry_run:
-        notify(
-            f"📚 {chosen_series}",
-            f"{len(batch)} file(s) delivered (~{total_pages} pages)\n"
-            f"{len(files) - len(batch)} file(s) remaining\n"
-            f"Triggered by: {trigger_user}",
-            tags="books",
-        )
-
-    # Advance index for next run
-    next_index = (chosen_index + 1) % len(series_order)
-    new_state = {"series_order": series_order, "current_index": next_index}
-    save_state(new_state, args.dry_run)
-
-    print("Done.")
+    # Normal path: drain everything the UI has queued, one series per pop.
+    drain_queue(upload_dir, comics_dir, args.dry_run)
 
 
 if __name__ == "__main__":

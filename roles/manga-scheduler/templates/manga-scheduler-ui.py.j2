@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Manga Scheduler Web UI — delivery, downloads, and schedule management."""
 
+import contextlib
 import datetime
+import fcntl
+import hmac
 import http.server
 import json
 import re
@@ -18,16 +21,21 @@ UPLOAD_DIR = Path("{{ manga_scheduler_upload_dir }}")
 COMICS_DIR = Path("{{ manga_scheduler_comics_dir }}")
 DATA_DIR = Path("{{ manga_scheduler_data_dir }}")
 STATE_FILE = DATA_DIR / "state.json"
-PENDING_FILE = DATA_DIR / "pending.txt"
+QUEUE_FILE = DATA_DIR / "queue.json"
 SCHEDULE_FILE = DATA_DIR / "schedule.json"
 SCHEDULER_SCRIPT = DATA_DIR / "manga-scheduler.py"
 DOWNLOADER_SCRIPT = DATA_DIR / "manga-downloader.py"
 DOWNLOAD_STATUS_FILE = DATA_DIR / "download-status.json"
 DOWNLOAD_HISTORY_FILE = DATA_DIR / "download-history.json"
 DOWNLOAD_PID_FILE = DATA_DIR / "downloader.pid"
-TRIGGER_USER_FILE = DATA_DIR / "trigger-user.txt"
 TARGET_PAGES = {{ manga_scheduler_target_pages }}
 PORT = {{ manga_scheduler_ui_port }}
+TOKENS_FILE = DATA_DIR / "tokens.json"
+TOKENS_PER_DAY = {{ manga_scheduler_tokens_per_day }}
+ADMIN_GROUP = "{{ manga_scheduler_admin_group }}"
+KIDS_USER = "{{ manga_scheduler_kids_user }}"
+KIDS_KEY_FILE = DATA_DIR / "kids-key.txt"
+GRANT_KEY_FILE = DATA_DIR / "grant-key.txt"
 {% raw %}
 COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp", ".tiff"}
@@ -125,6 +133,204 @@ def load_schedule() -> list[str]:
 
 def save_schedule(active_series: list[str]):
     SCHEDULE_FILE.write_text(json.dumps({"active_series": active_series}, indent=2))
+
+
+# --- Token economy ---
+# Each member accrues TOKENS_PER_DAY per calendar day (unlimited accumulation);
+# a delivery costs 1 token. Admins are exempt. Grants are lazy (applied whenever
+# a member's balance is read), so no cron/timer is needed. All read-modify-write
+# goes through _tokens_locked() so concurrent UI threads can't double-spend.
+
+@contextlib.contextmanager
+def _tokens_locked():
+    """Open tokens.json under an exclusive flock, yield the dict, persist on exit."""
+    TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
+    f = open(TOKENS_FILE, "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        raw = f.read()
+        try:
+            data = json.loads(raw) if raw.strip() else {}
+        except json.JSONDecodeError:
+            data = {}
+        data.setdefault("users", {})
+        yield data
+        f.seek(0)
+        f.truncate()
+        json.dump(data, f, indent=2)
+        f.flush()
+    finally:
+        fcntl.flock(f, fcntl.LOCK_UN)
+        f.close()
+
+
+def _apply_accrual(rec: dict) -> None:
+    """Grant TOKENS_PER_DAY for each calendar day since last_grant (mutates rec)."""
+    today = datetime.date.today().isoformat()
+    last = rec.get("last_grant")
+    if last is None:
+        rec["balance"] = rec.get("balance", 0) + TOKENS_PER_DAY
+        rec["last_grant"] = today
+        return
+    try:
+        days = (datetime.date.fromisoformat(today) - datetime.date.fromisoformat(last)).days
+    except ValueError:
+        days = 0
+    if days > 0:
+        rec["balance"] = rec.get("balance", 0) + TOKENS_PER_DAY * days
+        rec["last_grant"] = today
+
+
+def get_balance(user: str) -> int:
+    """Accrue then return the member's current token balance."""
+    with _tokens_locked() as data:
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": None})
+        _apply_accrual(rec)
+        return rec["balance"]
+
+
+def try_spend(user: str) -> tuple[bool, int]:
+    """Accrue then spend 1 token, atomically. Returns (spent?, balance_after)."""
+    with _tokens_locked() as data:
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": None})
+        _apply_accrual(rec)
+        if rec["balance"] >= 1:
+            rec["balance"] -= 1
+            return True, rec["balance"]
+        return False, rec["balance"]
+
+
+def refund(user: str, n: int = 1) -> None:
+    """Return tokens to a member (used when a paid delivery fails to start)."""
+    with _tokens_locked() as data:
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": datetime.date.today().isoformat()})
+        rec["balance"] = rec.get("balance", 0) + n
+
+
+def user_ctx(headers) -> dict:
+    """Identify the requester from Authelia forward-auth headers + their balance."""
+    user = headers.get("Remote-Name") or headers.get("Remote-User") or "Unknown"
+    groups = [g.strip() for g in (headers.get("Remote-Groups") or "").split(",") if g.strip()]
+    is_admin = ADMIN_GROUP in groups
+    return {"user": user, "is_admin": is_admin, "balance": get_balance(user)}
+
+
+# --- Delivery queue ---
+# Producers (this UI) append a request; the scheduler worker drains it one series
+# per run, sharing queue.json + an flock with the worker. A burst of clicks can
+# therefore never coalesce into a single delivery (the old pending.txt bug, where
+# `systemctl start` on an already-running oneshot silently dropped the request).
+
+@contextlib.contextmanager
+def _queue_locked():
+    """Open queue.json under an exclusive flock, yield the list, persist on exit."""
+    QUEUE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    f = open(QUEUE_FILE, "a+")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        f.seek(0)
+        raw = f.read()
+        try:
+            queue = json.loads(raw) if raw.strip() else []
+        except json.JSONDecodeError:
+            queue = []
+        yield queue
+        f.seek(0)
+        f.truncate()
+        json.dump(queue, f, indent=2)
+        f.flush()
+    finally:
+        fcntl.flock(f, fcntl.LOCK_UN)
+        f.close()
+
+
+def enqueue(series: str, user: str, charged: bool) -> None:
+    with _queue_locked() as queue:
+        queue.append({"series": series, "user": user, "charged": charged})
+
+
+def _dequeue_one(series: str, user: str, charged: bool) -> None:
+    """Roll back the entry we just appended (used when the start command fails)."""
+    with _queue_locked() as queue:
+        for i in range(len(queue) - 1, -1, -1):
+            e = queue[i]
+            if (e.get("series") == series and e.get("user") == user
+                    and bool(e.get("charged")) == charged):
+                queue.pop(i)
+                break
+
+
+def deliver_series(user: str, series: str, is_admin: bool) -> tuple:
+    """Spend a token (unless admin) and enqueue a delivery. Shared by the main UI
+    and the kids page. The scheduler worker drains the queue one series per run,
+    so rapid requests never collide. Returns (ok, message, balance_after_or_None)."""
+    if series not in discover_series():
+        return False, f"Series not found: {series}", None
+    balance = None
+    charged = False
+    if not is_admin:
+        spent, balance = try_spend(user)
+        if not spent:
+            return False, f"Not enough tokens — you have {balance}. You get {TOKENS_PER_DAY}/day.", balance
+        charged = True
+
+    enqueue(series, user, charged)
+    try:
+        result = subprocess.run(
+            ["systemctl", "start", "--no-block", "manga-scheduler.service"],
+            capture_output=True, text=True, timeout=15,
+        )
+    except subprocess.SubprocessError as e:
+        _dequeue_one(series, user, charged)
+        if charged:
+            refund(user)
+            balance = (balance or 0) + 1
+        return False, "Failed to start delivery: " + str(e), balance
+    if result.returncode == 0:
+        return True, "Delivery queued: " + series, balance
+    _dequeue_one(series, user, charged)
+    if charged:
+        refund(user)
+        balance = (balance or 0) + 1
+    return False, "Failed: " + result.stderr.strip(), balance
+
+
+# --- Kids mode (magic-link page for e-ink Kobo browsers) ---
+
+def _kids_key() -> str:
+    try:
+        return KIDS_KEY_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def valid_kids_key(key: str) -> bool:
+    real = _kids_key()
+    return bool(real) and hmac.compare_digest(key, real)
+
+
+# --- Token grant endpoint (for Home Assistant / QR scan-to-earn) ---
+
+def _grant_key() -> str:
+    try:
+        return GRANT_KEY_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def valid_grant_key(key: str) -> bool:
+    real = _grant_key()
+    return bool(real) and hmac.compare_digest(key, real)
+
+
+def grant_tokens(user: str, n: int) -> int:
+    """Add n tokens to a user (also applies any pending daily accrual). Returns balance."""
+    with _tokens_locked() as data:
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": datetime.date.today().isoformat()})
+        _apply_accrual(rec)
+        rec["balance"] += n
+        return rec["balance"]
 
 
 def get_delivery_log(lines: int = 500) -> list[dict]:
@@ -423,22 +629,26 @@ def _page(title: str, active_tab: str, body: str, msg: str = "", error: bool = F
 
 # --- Delivery page ---
 
-def render_delivery(msg: str = "", error: bool = False) -> str:
+def render_delivery(msg: str = "", error: bool = False, ctx: dict = None) -> str:
+    ctx = ctx or {"user": "Unknown", "is_admin": False, "balance": 0}
     series_map = discover_series()
-    state = load_state()
-    timer = get_timer_info()
-    active_series = load_schedule()
     delivery_runs = get_delivery_log()
 
-    next_series = get_next_series(series_map, state, active_series)
-    next_run = timer.get("NextElapseUSecRealtime", "n/a")
-    last_run = timer.get("LastTriggerUSec", "n/a")
+    if ctx["is_admin"]:
+        token_html = f"<span>You: <strong>{escape(ctx['user'])}</strong> (admin \u2014 unlimited)</span>"
+        can_deliver = True
+    else:
+        token_html = (
+            f"<span>You: <strong>{escape(ctx['user'])}</strong></span>"
+            f"<span>Tokens: <strong>{ctx['balance']}</strong> "
+            f"<span style='color:#a0aec0'>(+{TOKENS_PER_DAY}/day)</span></span>"
+        )
+        can_deliver = ctx["balance"] >= 1
 
     info = (
         "<div class='info'>"
-        f"<span>Next auto-run: <strong>{escape(next_run)}</strong></span>"
-        f"<span>Last run: <strong>{escape(last_run)}</strong></span>"
-        f"<span>Next in queue: <strong>{escape(next_series or 'none')}</strong></span>"
+        + token_html
+        + "<span style='color:#a0aec0'>Auto-delivery is off \u2014 spend 1 token to deliver a volume.</span>"
         "</div>"
     )
 
@@ -446,32 +656,40 @@ def render_delivery(msg: str = "", error: bool = False) -> str:
     rows = []
     for name, files in sorted(series_map.items()):
         total_mb = sum(f.stat().st_size for f in files) / (1024 * 1024)
-        is_next = "\u2713" if name == next_series else ""
         safe_name = escape(name)
-        row_class = ' class="next"' if name == next_series else ""
+        if ctx["is_admin"]:
+            deliver_btn = (
+                f"<form method='post' action='/deliver' onsubmit=\"return confirm('Deliver a volume of {safe_name}?')\">"
+                f"<input type='hidden' name='series' value='{safe_name}'>"
+                "<button type='submit'>Deliver</button></form>"
+            )
+        elif can_deliver:
+            deliver_btn = (
+                f"<form method='post' action='/deliver' onsubmit=\"return confirm('Spend 1 token to deliver a volume of {safe_name}? You have {ctx['balance']}.')\">"
+                f"<input type='hidden' name='series' value='{safe_name}'>"
+                "<button type='submit'>Deliver (1 token)</button></form>"
+            )
+        else:
+            deliver_btn = "<button type='submit' disabled title='Not enough tokens'>Deliver (1 token)</button>"
         rows.append(
-            f"<tr{row_class}>"
+            "<tr>"
             f"<td>{safe_name}</td>"
             f"<td>{len(files)}</td>"
             f"<td>{'%.1f' % total_mb} MB</td>"
-            f"<td>{is_next}</td>"
             "<td class='actions'>"
-            f"<form method='post' action='/deliver' onsubmit=\"return confirm('Deliver now: {safe_name}?')\">"
-            f"<input type='hidden' name='series' value='{safe_name}'>"
-            "<button type='submit'>Deliver Now</button>"
-            "</form>"
-            f"<form method='post' action='/delete-series' onsubmit=\"return confirm('Delete \\'{safe_name}\\' ({len(files)} file(s)) from the upload queue? This cannot be undone.')\">"
+            + deliver_btn
+            + f"<form method='post' action='/delete-series' onsubmit=\"return confirm('Delete \\'{safe_name}\\' ({len(files)} file(s)) from the upload queue? This cannot be undone.')\">"
             f"<input type='hidden' name='series' value='{safe_name}'>"
             "<button type='submit' class='danger'>Delete</button>"
             "</form>"
             "</td>"
             "</tr>"
         )
-    rows_html = "\n".join(rows) if rows else "<tr><td colspan='5' class='empty'>No series in upload queue.</td></tr>"
+    rows_html = "\n".join(rows) if rows else "<tr><td colspan='4' class='empty'>No series in upload queue.</td></tr>"
 
     table = (
         "<table><thead><tr>"
-        "<th>Series</th><th>Files</th><th>Size</th><th>Next</th><th>Action</th>"
+        "<th>Series</th><th>Files</th><th>Size</th><th>Action</th>"
         "</tr></thead><tbody>\n" + rows_html + "\n</tbody></table>"
     )
 
@@ -695,6 +913,115 @@ def render_schedule(msg: str = "", error: bool = False) -> str:
     return _page("Schedule", "Schedule", selection + preview_html, msg, error)
 
 
+# --- Kids page rendering (standalone; big tap targets for e-ink, no JS) ---
+
+# Light pastel cards read best on the Kobo's Kaleido color e-ink (the black text
+# comes from the crisp B&W layer; the color is a light wash). (background, border).
+KIDS_COLORS = [
+    ("#ffd6e6", "#ec4899"),  # pink
+    ("#d3ebff", "#3b82f6"),  # blue
+    ("#d6f5d6", "#22c55e"),  # green
+    ("#fff0b8", "#f59e0b"),  # yellow
+    ("#e8d6ff", "#8b5cf6"),  # purple
+    ("#ffdcc0", "#f97316"),  # orange
+    ("#c9f2ee", "#14b8a6"),  # teal
+    ("#ffcccc", "#ef4444"),  # red
+]
+
+KIDS_CSS = """
+* { box-sizing: border-box; }
+body { font-family: -apple-system, system-ui, sans-serif; max-width: 860px; margin: 0 auto; padding: 1rem; background: #fffdf7; color: #1a1a1a; }
+h1 { font-size: 2rem; text-align: center; margin: 0.4rem 0 0.9rem; color: #7c3aed; }
+.k-tokens { font-size: 1.5rem; text-align: center; background: #fff0b8; border: 3px solid #f59e0b; border-radius: 16px; padding: 0.7rem; margin-bottom: 0.8rem; color: #7c4a03; }
+.stars { color: #f59e0b; letter-spacing: 2px; }
+.k-msg { font-size: 1.3rem; text-align: center; background: #d6f5d6; border: 3px solid #16a34a; border-radius: 16px; padding: 0.9rem; margin-bottom: 0.9rem; color: #14532d; }
+.k-msg.err { background: #ffdada; border-color: #dc2626; color: #7f1d1d; }
+.k-hint { text-align: center; color: #555; font-size: 1.05rem; margin: 0.2rem 0 1rem; }
+/* Float layout, not grid/flex — the Kobo browser (WebKit 538) supports neither. */
+.k-grid { overflow: hidden; }
+.k-grid form { margin: 0; }
+.k-cell { float: left; width: 48%; margin: 0 1% 0.8rem; }
+.k-cell:nth-child(odd) { clear: left; }
+.k-item { display: block; width: 100%; text-align: center; font-size: 1.3rem; font-weight: 600; line-height: 1.25; padding: 1.1rem 0.6rem; border: 3px solid; border-radius: 18px; cursor: pointer; min-height: 5.2rem; color: #1a1a1a; background: #fff; text-decoration: none; }
+.k-item:active { opacity: 0.6; }
+.k-off { opacity: 0.5; }
+.k-left { display: block; font-size: 0.9rem; font-weight: 400; color: #333; margin-top: 0.35rem; }
+.k-empty { text-align: center; font-size: 1.3rem; color: #555; }
+/* Confirmation page */
+.k-confirm { font-size: 1.6rem; text-align: center; margin: 1.8rem 0 0.5rem; line-height: 1.3; }
+.k-cost { font-size: 1.2rem; text-align: center; color: #555; margin-bottom: 1.8rem; }
+.k-choices form { margin: 0; }
+.k-yes, .k-no { display: block; width: 100%; font-size: 1.6rem; font-weight: 700; padding: 1.4rem; border: 3px solid; border-radius: 18px; margin-bottom: 1rem; text-align: center; cursor: pointer; text-decoration: none; }
+.k-yes { background: #d6f5d6; border-color: #16a34a; color: #14532d; }
+.k-no { background: #ffdada; border-color: #dc2626; color: #7f1d1d; }
+.k-yes:active, .k-no:active { opacity: 0.6; }
+"""
+
+
+def _kids_page(inner: str) -> str:
+    return (
+        "<!DOCTYPE html><html lang='es'><head><meta charset='UTF-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Los cómics de Emma</title><style>" + KIDS_CSS + "</style></head><body>"
+        "<h1>Los cómics de Emma</h1>"
+        + inner +
+        "</body></html>"
+    )
+
+
+def render_kids(key: str, msg: str = "", error: bool = False) -> str:
+    balance = get_balance(KIDS_USER)
+    series_map = discover_series()
+    can = balance >= 1
+
+    if can:
+        stars = ("★" * balance) if balance <= 12 else ("★ ×%d" % balance)
+        tokens_line = f"<div class='k-tokens'>Tienes <b>{balance}</b> <span class='stars'>{stars}</span></div>"
+    else:
+        tokens_line = "<div class='k-tokens'>No te quedan estrellas — ¡vuelve mañana!</div>"
+
+    msg_html = f"<div class='k-msg{' err' if error else ''}'>{escape(msg)}</div>" if msg else ""
+
+    rows = []
+    for i, (name, files) in enumerate(sorted(series_map.items())):
+        safe = escape(name)
+        bg, bd = KIDS_COLORS[i % len(KIDS_COLORS)]
+        style = f"background:{bg};border-color:{bd}"
+        label = f"<span class='k-name'>{safe}</span><span class='k-left'>quedan {len(files)}</span>"
+        if can:
+            # Tap goes to a confirmation page (no JS confirm() on the Kobo browser).
+            href = "/kids-confirm?key=" + urllib.parse.quote(key) + "&series=" + urllib.parse.quote(name)
+            inner = f"<a class='k-item' href='{escape(href)}' style='{style}'>{label}</a>"
+        else:
+            inner = f"<div class='k-item k-off' style='{style}'>{label}</div>"
+        rows.append(f"<div class='k-cell'>{inner}</div>")
+    items = "\n".join(rows) if rows else "<p class='k-empty'>No hay cómics en espera ahora mismo.</p>"
+
+    return _kids_page(
+        tokens_line + msg_html
+        + "<p class='k-hint'>Toca un cómic para enviarlo a tu Kobo.</p>"
+        + "<div class='k-grid'>" + items + "</div>"
+    )
+
+
+def render_kids_confirm(key: str, series: str) -> str:
+    balance = get_balance(KIDS_USER)
+    safe_key = escape(key)
+    safe = escape(series)
+    return _kids_page(
+        f"<div class='k-confirm'>¿Enviar <b>{safe}</b> a tu Kobo?</div>"
+        f"<div class='k-cost'>Cuesta 1 estrella. Te quedan <b>{balance}</b>.</div>"
+        "<div class='k-choices'>"
+        "<form method='post' action='/kids-deliver'>"
+        f"<input type='hidden' name='key' value='{safe_key}'>"
+        f"<input type='hidden' name='series' value='{safe}'>"
+        "<button class='k-yes' type='submit'>Sí, enviar</button>"
+        "</form>"
+        f"<a class='k-no' href='/kids?key={safe_key}'>No, volver</a>"
+        "</div>"
+    )
+
+
 # --- HTTP Handler ---
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -729,11 +1056,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         err = params.get("err", ["0"])[0] == "1"
 
         if parsed.path == "/":
-            self.send_html(render_delivery(msg, err))
+            self.send_html(render_delivery(msg, err, user_ctx(self.headers)))
         elif parsed.path == "/download-page":
             self.send_html(render_download(msg, err))
         elif parsed.path == "/schedule":
             self.send_html(render_schedule(msg, err))
+        elif parsed.path == "/kids":
+            key = params.get("key", [""])[0]
+            if not valid_kids_key(key):
+                self.send_html("<h1>Enlace incorrecto</h1><p>Falta la clave o está mal escrita.</p>", 403)
+                return
+            self.send_html(render_kids(key, msg, err))
+        elif parsed.path == "/kids-confirm":
+            key = params.get("key", [""])[0]
+            if not valid_kids_key(key):
+                self.send_html("<h1>Enlace incorrecto</h1><p>Falta la clave o está mal escrita.</p>", 403)
+                return
+            series = params.get("series", [""])[0].strip()
+            if not series or series not in discover_series():
+                self.send_redirect("/kids?key=" + urllib.parse.quote(key))
+                return
+            self.send_html(render_kids_confirm(key, series))
         elif parsed.path == "/api/status":
             series_map = discover_series()
             state = load_state()
@@ -763,6 +1106,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_download(params)
         elif self.path == "/deliver":
             self._handle_deliver(params)
+        elif self.path == "/kids-deliver":
+            self._handle_kids_deliver(params)
+        elif self.path == "/grant":
+            self._handle_grant(params)
         elif self.path == "/delete-series":
             self._handle_delete_series(params)
         elif self.path == "/schedule":
@@ -772,38 +1119,48 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def _handle_deliver(self, params: dict):
         series = params.get("series", [""])[0].strip()
-        user = self.headers.get("Remote-Name") or self.headers.get("Remote-User") or "Unknown"
-
+        ctx = user_ctx(self.headers)
         if not series:
             self.send_redirect("/?msg=No+series+specified&err=1")
             return
-
-        PENDING_FILE.write_text(series)
-        TRIGGER_USER_FILE.write_text(user)
-
-        # Fire-and-forget: `systemctl start` on a Type=oneshot blocks until the
-        # job FINISHES. A large batch takes well over 120s, so a synchronous call
-        # raised TimeoutExpired and showed a false error even though the delivery
-        # completed in the background. --no-block just enqueues the job and
-        # returns immediately; results show up in Komga once the batch finishes.
-        try:
-            result = subprocess.run(
-                ["systemctl", "start", "--no-block", "manga-scheduler.service"],
-                capture_output=True, text=True, timeout=15,
-            )
-        except subprocess.SubprocessError as e:
-            if PENDING_FILE.exists():
-                PENDING_FILE.unlink()
-            self.send_redirect("/?msg=" + urllib.parse.quote("Failed to start delivery: " + str(e)) + "&err=1")
-            return
-
-        if result.returncode == 0:
+        ok, message, balance = deliver_series(ctx["user"], series, ctx["is_admin"])
+        if ok:
+            suffix = "" if ctx["is_admin"] else f" — {balance} token(s) left"
             self.send_redirect("/?msg=" + urllib.parse.quote(
-                "Delivery started: " + series + " — will appear in Komga shortly"))
+                message + " — will appear in Komga shortly" + suffix))
         else:
-            if PENDING_FILE.exists():
-                PENDING_FILE.unlink()
-            self.send_redirect("/?msg=" + urllib.parse.quote("Failed: " + result.stderr.strip()) + "&err=1")
+            self.send_redirect("/?msg=" + urllib.parse.quote(message) + "&err=1")
+
+    def _handle_kids_deliver(self, params: dict):
+        key = params.get("key", [""])[0]
+        if not valid_kids_key(key):
+            self.send_html("<h1>Enlace incorrecto</h1><p>Falta la clave o está mal escrita.</p>", 403)
+            return
+        series = params.get("series", [""])[0].strip()
+        if not series:
+            self.send_redirect("/kids?key=" + urllib.parse.quote(key))
+            return
+        ok, message, _balance = deliver_series(KIDS_USER, series, is_admin=False)
+        friendly = "¡Bien! Sincroniza tu Kobo para leerlo." if ok else "Ups, no se pudo enviar."
+        q = "/kids?key=" + urllib.parse.quote(key) + "&msg=" + urllib.parse.quote(friendly)
+        if not ok:
+            q += "&err=1"
+        self.send_redirect(q)
+
+    def _handle_grant(self, params: dict):
+        """Add tokens to a user. Authenticated by the grant key (for Home Assistant /
+        QR scan-to-earn). Returns JSON so HA can read the new balance."""
+        if not valid_grant_key(params.get("key", [""])[0]):
+            self.send_json({"error": "forbidden"}, 403)
+            return
+        user = params.get("user", [""])[0].strip() or KIDS_USER
+        try:
+            n = int(params.get("n", ["1"])[0])
+        except (ValueError, TypeError):
+            n = 1
+        n = max(1, min(n, 10))
+        balance = grant_tokens(user, n)
+        self.send_json({"ok": True, "user": user, "granted": n, "balance": balance})
 
     def _handle_delete_series(self, params: dict):
         series = params.get("series", [""])[0].strip()

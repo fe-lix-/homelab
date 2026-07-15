@@ -8,6 +8,9 @@ OnSuccess=kcc-converter.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/python3 {{ manga_scheduler_data_dir }}/manga-scheduler.py
+# One run now drains the whole delivery queue (possibly several volumes, each
+# page-counted), so don't let the default oneshot start-timeout kill a long drain.
+TimeoutStartSec=infinity
 Nice=19
 IOSchedulingClass=idle
 NoNewPrivileges=true

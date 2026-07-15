@@ -5,6 +5,20 @@ manga_scheduler_data_dir: /opt/manga-scheduler
 manga_scheduler_target_pages: 150
 manga_scheduler_schedule: "*-*-* 04,16:00:00"   # twice daily (04:00 + 16:00)
 manga_scheduler_ui_port: 5010
+
+# --- Token economy ---
+# Deliveries are on-demand and cost tokens (no automatic drip). Each UI member
+# accrues this many tokens per calendar day (unlimited accumulation). Members of
+# manga_scheduler_admin_group deliver for free.
+manga_scheduler_tokens_per_day: 2
+manga_scheduler_admin_group: admin
+
+# Kids mode: a low-friction magic-link page (for e-ink Kobo browsers) that maps a
+# secret URL key to this Authelia identity, so the kid can spend their own tokens
+# without an Authelia login. The key is generated on the server (kids-key.txt) and
+# never leaves it. LAN-only (the vhost's local_guard covers /kids too).
+manga_scheduler_kids_user: emma
+
 manga_downloader_delay: 30
 manga_downloader_staging_dir: "{{ manga_scheduler_data_dir }}/staging"
 manga_scheduler_ntfy_url: "http://127.0.0.1:{{ ntfy_port }}"

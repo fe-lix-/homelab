@@ -29,6 +29,20 @@
     mode: "0644"
   notify: Restart homeassistant
 
+- name: Add Emma's token-grant command under Home Assistant rest_command
+  # Merge into the existing (live-edited) rest_command: mapping — a second
+  # top-level rest_command: key would be invalid. Lets an HA tag/automation give
+  # Emma a token via the manga-scheduler UI (localhost only; 5010 =
+  # manga_scheduler_ui_port). Key from the vault, matching grant-key.txt.
+  ansible.builtin.blockinfile:
+    path: "{{ homeassistant_data_dir }}/config/configuration.yaml"
+    marker: "  # {mark} ANSIBLE MANAGED - manga token grant"
+    insertafter: '^rest_command:$'
+    block: "  emma_grant_token:\n    url: \"http://127.0.0.1:5010/grant\"\n    method: POST\n    content_type: \"application/x-www-form-urlencoded\"\n    payload: \"key={{ vault_manga_scheduler_grant_key }}&user=emma&n=1\""
+    mode: "0644"
+  no_log: true
+  notify: Restart homeassistant
+
 - name: Deploy Home Assistant docker-compose file
   ansible.builtin.template:
     src: docker-compose.yml.j2

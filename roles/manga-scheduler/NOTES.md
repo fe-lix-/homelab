@@ -1,5 +1,77 @@
 # Manga Scheduler — Implementation Notes
 
+## Token economy (on-demand delivery)
+
+Deliveries are **not** automatic. The twice-daily `manga-scheduler.timer` is
+**disabled** (`tasks/main.yml`); the `manga-scheduler.service` now only runs when
+someone spends a token in the UI.
+
+- Every member of the `manga-scheduler` Authelia group accrues
+  `manga_scheduler_tokens_per_day` (default **2**) tokens per calendar day,
+  **unlimited accumulation**. Grants are *lazy* — applied whenever a member's
+  balance is read in the UI — so no cron/timer is needed. First sighting of a user
+  seeds one day's grant.
+- A delivery (one ~`target_pages` batch ≈ one volume) costs **1 token**.
+- Members of `manga_scheduler_admin_group` (default `admin`) are **exempt** —
+  unlimited free deliveries.
+- Balances live in `{{ data_dir }}/tokens.json`
+  (`{"users": {"<name>": {"balance": N, "last_grant": "YYYY-MM-DD"}}}`), guarded by
+  an `flock` (`_tokens_locked`) so concurrent UI threads can't double-spend. A
+  delivery that fails to start is **refunded**.
+- User identity + groups come from Authelia forward-auth headers `Remote-Name` /
+  `Remote-Groups` (nginx `authelia_auth()` forwards both).
+
+The Schedule tab's round-robin ordering / "next 10 deliveries" preview is now
+cosmetic (nothing auto-delivers); left in place, not wired to the token flow. The
+scheduler itself no longer round-robins — it only drains the queue (below).
+
+### Delivery queue (`queue.json`)
+
+Deliveries flow through a shared, flock-guarded queue so a burst of clicks can
+never collide:
+
+- **Producer** (`manga-scheduler-ui.py`, `deliver_series`): charges the token,
+  **appends** `{"series", "user", "charged"}` to `{{ data_dir }}/queue.json` under
+  an flock, then `systemctl start --no-block manga-scheduler.service`. If the start
+  command itself errors, it removes the entry it just added and refunds.
+- **Worker** (`manga-scheduler.py`, `drain_queue`): grabs `worker.lock`
+  (non-blocking — a second invocation just exits) and pops one series per
+  iteration until the queue is empty, delivering each via `deliver_one`. One Komga
+  scan runs after the whole drain.
+- **Why this replaced `pending.txt`:** the old design wrote a single pending series
+  + trigger-user file and started the oneshot. Two requests within one run window
+  → `systemctl start` on an already-running oneshot **silently coalesces**, so the
+  second request was charged (start returned 0, no refund) but never delivered.
+  Emma hit this exactly (paid for Akane Banashi, got nothing). See git history.
+- **Race-free hand-off:** when the worker finds the queue empty it releases
+  `worker.lock` *before* the queue lock. A producer must hold the queue lock to
+  append, so anything enqueued after the empty check is guaranteed to see
+  `worker.lock` already free and can start a fresh worker — nothing is ever
+  dropped, even when the waking `systemctl start` coalesces.
+- **No lost tokens:** if the worker finds a charged request undeliverable
+  (series emptied/removed) or a move fails, `deliver_one` refunds that user via
+  `_refund_token` (its own flock on `tokens.json`).
+- `manga-scheduler.py --series NAME` still delivers one series directly, bypassing
+  the queue (manual/admin CLI, no token accounting). `TimeoutStartSec=infinity` on
+  the unit so a long multi-volume drain isn't killed.
+
+### Kids mode (`/kids`)
+
+A standalone, big-tap-target, no-JS page for e-ink Kobo browsers. It maps a secret
+URL key to `manga_scheduler_kids_user` (default `emma`) so the kid spends **their
+own** tokens (`deliver_series()` with `is_admin=False`) without an Authelia login.
+
+- Key is generated once on the server (`{{ data_dir }}/kids-key.txt`, root 600,
+  `creates:` guard — never regenerated) and never leaves it; the UI runs as root so
+  it can read it. `valid_kids_key()` uses `hmac.compare_digest`.
+- nginx: a `location /kids` (covers `/kids` + `/kids-deliver`) proxies **without**
+  `authelia_auth()`; the vhost's server-level `local_guard()` still confines it to
+  the LAN. `location /` keeps full Authelia.
+- Bookmark on the Kobo: `https://manga-scheduler.<domain>/kids?key=<key>`. Delivery
+  flows to her Kobo automatically via `OnSuccess=kcc-converter.service`; she just
+  re-syncs the Kobo to pull the new volume.
+- To rotate the key: delete `kids-key.txt` and re-run the role.
+
 ## ouo.io bypass
 
 ouo.io link shortener requires human verification with an "I'm human" button that only appears if no bot is detected.
@@ -101,5 +173,5 @@ Notifications sent to per-manga topics (e.g., `manga-bluelock`). Uses header-bas
 - tomosmanga: archives downloaded to staging, extracted with `7z`, comic files moved to `/srv/uploads/mangas/<series>/`.
 - sushiscan: page images downloaded to `staging/sushiscan/<entry>/`, packaged into CBZ with ComicInfo.xml, moved to `/srv/uploads/mangas/<series>/`.
 - `manga-chapter-checker.py` is a separate daily systemd timer for fmteam.fr. Downloads chapters directly to `/srv/comics/<series>/` (bypasses the scheduler queue).
-- `schedule.json` stores active series selection. The scheduler filters round-robin to active series first, falls back to all when active are exhausted.
+- `schedule.json` / `state.json` now only back the UI's cosmetic Schedule-tab preview. The scheduler no longer reads them — it drains `queue.json` (see "Delivery queue" above).
 - The UI has three pages: Delivery (`/`), Download (`/download-page`), and Schedule (`/schedule`).
