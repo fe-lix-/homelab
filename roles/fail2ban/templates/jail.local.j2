@@ -46,7 +46,7 @@ bantime  = 24h
 
 # Brute-force guard for the two internet-facing token endpoints:
 #   shop.delval.eu/kids  -> wrong kids-page key returns 403
-#   kobo.delval.eu/kobo/ -> wrong Komga API key returns 401
+#   kobo.delval.eu/kobo/ -> wrong Komga API key returns 403 (401 matched too)
 # Only reachable externally (LAN is whitelisted via ignoreip), so a handful of
 # failures from one IP is a token-guesser. 5 in 10 min -> 24h ban.
 [nginx-public-auth]
