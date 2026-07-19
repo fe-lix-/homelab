@@ -261,6 +261,11 @@ access_control:
         - "group:manga-scheduler"
         - "group:admin"
 
+    - domain: "wg.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:admin"
+
     # Arr stack (sonarr, radarr, lidarr, prowlarr, bazarr, mediathek, joynarr)
     - domain:
         - "sonarr.{{ base_domain }}"

@@ -1,0 +1,40 @@
+---
+# WireGuard "Germany" server — a wg-easy container whose CLIENTS egress through
+# the German ExpressVPN VLAN (VLAN 30) via macvlan, while the tunnel's own
+# control plane (handshakes) stays on the normal home WAN. Clients you issue a
+# config to appear German; everyone else keeps using the UniFi WG server.
+wireguard_de_data_dir: /opt/wireguard-de
+wireguard_de_image: ghcr.io/wg-easy/wg-easy:14
+
+# Web UI (bound to localhost; fronted by nginx + Authelia like other admin tools)
+wireguard_de_ui_port: 51823
+
+# WireGuard UDP port advertised to clients. MUST match the gateway port-forward
+# (WAN {{ wireguard_de_wg_port }}/udp -> kazad-dum).
+wireguard_de_wg_port: 51822
+
+# WG client tunnel subnet — these addresses are what we route out Germany.
+wireguard_de_client_subnet: "10.9.0.0/24"
+wireguard_de_client_range: "10.9.0.x"
+
+# Public endpoint clients dial (home WAN, kept fresh by the ddns role).
+wireguard_de_host: "home.delval.eu"
+
+# DNS handed to clients (resolved out the German egress, so no geo mismatch).
+wireguard_de_dns: "1.1.1.1"
+
+# wg-easy web-UI login — bcrypt hash from the vault. Generate with:
+#   docker run --rm ghcr.io/wg-easy/wg-easy:14 wgpw 'yourpassword'
+wireguard_de_password_hash: "{{ vault_wireguard_de_password_hash | default('') }}"
+
+# VLAN 30 (German) macvlan egress — reuses the shared network the mediathekarr
+# role established (parent {{ mediathekarr_vlan_interface }}.{{ mediathekarr_vlan_id }}).
+wireguard_de_vlan_network: "vlan30"
+wireguard_de_vlan_ip: "10.0.30.4"
+wireguard_de_vlan_gateway: "{{ mediathekarr_vlan_gateway }}"
+
+# Deterministic internal bridge so the container's default route (handshakes ->
+# home WAN) is a known gateway we can pin in the post-up hook.
+wireguard_de_bridge_subnet: "172.16.99.0/24"
+wireguard_de_bridge_gateway: "172.16.99.1"
+wireguard_de_bridge_ip: "172.16.99.2"

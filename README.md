@@ -16,6 +16,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Prowlarr | Indexer manager | `prowlarr.homelab.example.com` |
 | Bazarr | Subtitle management | `bazarr.homelab.example.com` |
 | MediathekArr | German public TV indexer (routed via VLAN 30 German VPN) | `mediathek.homelab.example.com` |
+| WireGuard (DE) | wg-easy WireGuard server whose clients egress via the VLAN 30 German VPN | `wg.homelab.example.com` |
 | JoynArr | Joyn.de streaming bridge for *arr (Newznab indexer + SABnzbd downloader) | `joynarr.homelab.example.com` |
 | qBittorrent | BitTorrent client | `torrent.homelab.example.com` |
 | Immich | Photo & video management | `photos.homelab.example.com` |
@@ -65,6 +66,7 @@ The repo also manages a separate **mail server VPS** as a different host group /
 - **WireGuard VPN** — UniFi Cloud Gateway Ultra serves a WireGuard VPN on `192.168.4.0/24` (port 51820). Use `Endpoint = YOUR_ROUTER_IP:51820` from LAN, `Endpoint = YOUR_PUBLIC_IP:51820` from internet (NAT hairpin prevents using the public IP from inside). The server has a static route to `192.168.4.0/24` via `YOUR_ROUTER_IP` (managed by the `base` role via netplan).
 - UFW firewall + hardened SSH (key-only, no root login, port 22 not forwarded from internet)
 - **German VPN VLAN** — Router provides VLAN 30 (`10.0.30.0/24`) with a German VPN exit. MediathekArr uses a Docker macvlan on this VLAN to access geo-restricted German public broadcaster content (ARD, ZDF, WDR, etc.). The container requires `cap_add: NET_ADMIN` for route manipulation; standard hardening options (`cap_drop: ALL`, `no-new-privileges`, `read_only`) are incompatible with the base image's root-init/gosu-drop startup pattern and cause crash-loops.
+- **WireGuard "Germany" server** — The `wireguard-de` role runs a wg-easy WireGuard server whose *clients* egress through the same VLAN 30 German exit (so a road-warrior appears German). UniFi cannot route its own WireGuard server through a VPN client (traffic-route sources only accept `corporate` VLANs, not `remote-user-vpn` networks — enforced in UI and API), so the server is a container on the VLAN 30 macvlan instead: it joins a bridge (handshakes/control → home WAN) and the macvlan (client subnet policy-routed → VLAN 30 → German). `gw_priority` on the bridge is required so Docker still publishes the WG port when a macvlan is attached.
 - **Brother MFC-L2800DW scanner** — brscan5 + brscan-skey on the host (not Docker) listens for scan button presses on UDP 54925. FILE button scans to Paperless consume dir; OCR button scans to `consume/double-sided/` for Paperless automatic front/back collation of double-sided documents. See `roles/brscan/SOLUTION.md` for full technical details.
 - Samba file sharing (`/srv`) with read-only, read-write, and guest upload groups
 - 3-2-1 backup strategy with restic (local + Backblaze B2)

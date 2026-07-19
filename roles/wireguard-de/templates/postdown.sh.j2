@@ -1,0 +1,11 @@
+#!/bin/sh
+# wg-quick PostDown: tear down what postup.sh added (best-effort).
+WG_SUBNET="{{ wireguard_de_client_subnet }}"
+VLAN_IP="{{ wireguard_de_vlan_ip }}"
+VLAN_IF=$(ip -o -4 addr show | grep -F " ${VLAN_IP}/" | awk '{print $2; exit}')
+
+ip rule del from "$WG_SUBNET" lookup 30 2>/dev/null || true
+iptables -D FORWARD -i wg0 -j ACCEPT 2>/dev/null || true
+iptables -D FORWARD -o wg0 -j ACCEPT 2>/dev/null || true
+iptables -D INPUT -p udp --dport 51820 -j ACCEPT 2>/dev/null || true
+iptables -t nat -D POSTROUTING -s "$WG_SUBNET" -o "$VLAN_IF" -j MASQUERADE 2>/dev/null || true

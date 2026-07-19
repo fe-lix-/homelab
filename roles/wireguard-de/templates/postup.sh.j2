@@ -1,0 +1,29 @@
+#!/bin/sh
+# wg-quick PostUp: send ONLY the WG client subnet out the VLAN30 (German)
+# interface, and keep the container's default route on the bridge so the
+# WireGuard handshake replies leave via the home WAN (clients dial the home IP
+# and must be answered from it, or the tunnel never establishes).
+set -e
+
+WG_SUBNET="{{ wireguard_de_client_subnet }}"
+BRIDGE_GW="{{ wireguard_de_bridge_gateway }}"
+VLAN_GW="{{ wireguard_de_vlan_gateway }}"
+VLAN_IP="{{ wireguard_de_vlan_ip }}"
+
+# Interface carrying the VLAN30 (German) address.
+VLAN_IF=$(ip -o -4 addr show | grep -F " ${VLAN_IP}/" | awk '{print $2; exit}')
+
+# 1) Default route = bridge → control plane / handshakes exit the home WAN.
+ip route replace default via "$BRIDGE_GW"
+
+# 2) Client traffic → VLAN30 (German) in a dedicated table.
+ip rule add from "$WG_SUBNET" lookup 30 2>/dev/null || true
+ip route replace default via "$VLAN_GW" dev "$VLAN_IF" table 30
+
+# 3) Forwarding + NAT the client subnet out the German interface.
+iptables -A FORWARD -i wg0 -j ACCEPT
+iptables -A FORWARD -o wg0 -j ACCEPT
+iptables -A INPUT -p udp --dport 51820 -j ACCEPT
+iptables -t nat -A POSTROUTING -s "$WG_SUBNET" -o "$VLAN_IF" -j MASQUERADE
+
+echo "[wireguard-de] client subnet ${WG_SUBNET} -> ${VLAN_IF} (VLAN30/German); default via ${BRIDGE_GW}"

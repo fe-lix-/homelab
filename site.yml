@@ -40,6 +40,8 @@
       tags: bazarr
     - role: mediathekarr
       tags: mediathekarr
+    - role: wireguard-de
+      tags: wireguard-de
     - role: joynarr
       tags: joynarr
     - role: mitmproxy

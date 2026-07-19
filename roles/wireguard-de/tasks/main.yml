@@ -1,0 +1,47 @@
+---
+- name: Ensure the WireGuard kernel module is loaded on the host
+  community.general.modprobe:
+    name: wireguard
+    state: present
+
+- name: Create wireguard-de directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ wireguard_de_data_dir }}"
+    - "{{ wireguard_de_data_dir }}/config"
+
+- name: Ensure the VLAN30 (German) macvlan network exists
+  # Shared with the mediathekarr role; idempotent if it already created it.
+  community.docker.docker_network:
+    name: "{{ wireguard_de_vlan_network }}"
+    driver: macvlan
+    driver_options:
+      parent: "{{ mediathekarr_vlan_interface }}.{{ mediathekarr_vlan_id }}"
+    ipam_config:
+      - subnet: "{{ mediathekarr_vlan_subnet }}"
+        gateway: "{{ mediathekarr_vlan_gateway }}"
+
+- name: Deploy post-up/down routing hooks
+  ansible.builtin.template:
+    src: "{{ item }}.j2"
+    dest: "{{ wireguard_de_data_dir }}/{{ item }}"
+    mode: "0755"
+  loop:
+    - postup.sh
+    - postdown.sh
+  notify: Restart wireguard-de
+
+- name: Deploy wireguard-de docker-compose
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ wireguard_de_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart wireguard-de
+
+- name: Start wireguard-de
+  community.docker.docker_compose_v2:
+    project_src: "{{ wireguard_de_data_dir }}"
+    state: present

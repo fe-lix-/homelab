@@ -1,0 +1,54 @@
+services:
+  wireguard-de:
+    image: {{ wireguard_de_image }}
+    container_name: wireguard-de
+    restart: unless-stopped
+    environment:
+      WG_HOST: "{{ wireguard_de_host }}"
+      WG_PORT: "{{ wireguard_de_wg_port }}"
+      PORT: "51821"
+      PASSWORD_HASH: "{{ wireguard_de_password_hash }}"
+      WG_DEFAULT_ADDRESS: "{{ wireguard_de_client_range }}"
+      WG_DEFAULT_DNS: "{{ wireguard_de_dns }}"
+      WG_ALLOWED_IPS: "0.0.0.0/0, ::/0"
+      # Route client traffic out VLAN30 (German) instead of wg-easy's default
+      # eth0 masquerade — see the mounted hook scripts.
+      WG_POST_UP: "/hooks/postup.sh"
+      WG_POST_DOWN: "/hooks/postdown.sh"
+    ports:
+      # WG UDP — wg-easy's wg0 listens internally on WG_PORT; gateway forwards WAN -> here.
+      - "{{ wireguard_de_wg_port }}:{{ wireguard_de_wg_port }}/udp"
+      # Web UI — localhost only, nginx+Authelia in front.
+      - "127.0.0.1:{{ wireguard_de_ui_port }}:51821"
+    volumes:
+      - "{{ wireguard_de_data_dir }}/config:/etc/wireguard"
+      - "{{ wireguard_de_data_dir }}/postup.sh:/hooks/postup.sh:ro"
+      - "{{ wireguard_de_data_dir }}/postdown.sh:/hooks/postdown.sh:ro"
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    sysctls:
+      net.ipv4.ip_forward: "1"
+      net.ipv4.conf.all.src_valid_mark: "1"
+    networks:
+      # gw_priority makes the bridge the container's gateway endpoint, so Docker
+      # sets up port publishing here (it silently skips publishing when the
+      # macvlan is the gateway endpoint). The post-up hook still pins the default
+      # route to this bridge so handshakes leave via the home WAN.
+      wgbr:
+        ipv4_address: "{{ wireguard_de_bridge_ip }}"
+        gw_priority: 1000
+      {{ wireguard_de_vlan_network }}:
+        ipv4_address: "{{ wireguard_de_vlan_ip }}"
+
+networks:
+  wgbr:
+    name: wgbr
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "{{ wireguard_de_bridge_subnet }}"
+          gateway: "{{ wireguard_de_bridge_gateway }}"
+  {{ wireguard_de_vlan_network }}:
+    name: {{ wireguard_de_vlan_network }}
+    external: true
