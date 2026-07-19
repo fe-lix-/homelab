@@ -32,6 +32,10 @@ TARGET_PAGES = {{ manga_scheduler_target_pages }}
 PORT = {{ manga_scheduler_ui_port }}
 TOKENS_FILE = DATA_DIR / "tokens.json"
 TOKENS_PER_DAY = {{ manga_scheduler_tokens_per_day }}
+# Per-user daily-accrual overrides ({username: tokens/day}); everyone else gets
+# TOKENS_PER_DAY. Both case variants of a name accrue as separate records
+# (Authelia forward-auth capitalises; the kids page uses lowercase), so list both.
+TOKENS_PER_DAY_OVERRIDES = {{ manga_scheduler_tokens_per_day_overrides | to_json }}
 ADMIN_GROUP = "{{ manga_scheduler_admin_group }}"
 KIDS_USER = "{{ manga_scheduler_kids_user }}"
 KIDS_KEY_FILE = DATA_DIR / "kids-key.txt"
@@ -165,12 +169,18 @@ def _tokens_locked():
         f.close()
 
 
-def _apply_accrual(rec: dict) -> None:
-    """Grant TOKENS_PER_DAY for each calendar day since last_grant (mutates rec)."""
+def _rate_for(user: str) -> int:
+    """This user's daily token accrual — a per-user override, else the default."""
+    return TOKENS_PER_DAY_OVERRIDES.get(user, TOKENS_PER_DAY)
+
+
+def _apply_accrual(user: str, rec: dict) -> None:
+    """Grant this user's daily rate for each calendar day since last_grant."""
+    rate = _rate_for(user)
     today = datetime.date.today().isoformat()
     last = rec.get("last_grant")
     if last is None:
-        rec["balance"] = rec.get("balance", 0) + TOKENS_PER_DAY
+        rec["balance"] = rec.get("balance", 0) + rate
         rec["last_grant"] = today
         return
     try:
@@ -178,7 +188,7 @@ def _apply_accrual(rec: dict) -> None:
     except ValueError:
         days = 0
     if days > 0:
-        rec["balance"] = rec.get("balance", 0) + TOKENS_PER_DAY * days
+        rec["balance"] = rec.get("balance", 0) + rate * days
         rec["last_grant"] = today
 
 
@@ -186,7 +196,7 @@ def get_balance(user: str) -> int:
     """Accrue then return the member's current token balance."""
     with _tokens_locked() as data:
         rec = data["users"].setdefault(user, {"balance": 0, "last_grant": None})
-        _apply_accrual(rec)
+        _apply_accrual(user, rec)
         return rec["balance"]
 
 
@@ -194,7 +204,7 @@ def try_spend(user: str) -> tuple[bool, int]:
     """Accrue then spend 1 token, atomically. Returns (spent?, balance_after)."""
     with _tokens_locked() as data:
         rec = data["users"].setdefault(user, {"balance": 0, "last_grant": None})
-        _apply_accrual(rec)
+        _apply_accrual(user, rec)
         if rec["balance"] >= 1:
             rec["balance"] -= 1
             return True, rec["balance"]
@@ -272,7 +282,7 @@ def deliver_series(user: str, series: str, is_admin: bool) -> tuple:
     if not is_admin:
         spent, balance = try_spend(user)
         if not spent:
-            return False, f"Not enough tokens — you have {balance}. You get {TOKENS_PER_DAY}/day.", balance
+            return False, f"Not enough tokens — you have {balance}. You get {_rate_for(user)}/day.", balance
         charged = True
 
     enqueue(series, user, charged)
@@ -328,7 +338,7 @@ def grant_tokens(user: str, n: int) -> int:
     """Add n tokens to a user (also applies any pending daily accrual). Returns balance."""
     with _tokens_locked() as data:
         rec = data["users"].setdefault(user, {"balance": 0, "last_grant": datetime.date.today().isoformat()})
-        _apply_accrual(rec)
+        _apply_accrual(user, rec)
         rec["balance"] += n
         return rec["balance"]
 
@@ -641,7 +651,7 @@ def render_delivery(msg: str = "", error: bool = False, ctx: dict = None) -> str
         token_html = (
             f"<span>You: <strong>{escape(ctx['user'])}</strong></span>"
             f"<span>Tokens: <strong>{ctx['balance']}</strong> "
-            f"<span style='color:#a0aec0'>(+{TOKENS_PER_DAY}/day)</span></span>"
+            f"<span style='color:#a0aec0'>(+{_rate_for(ctx['user'])}/day)</span></span>"
         )
         can_deliver = ctx["balance"] >= 1
 
