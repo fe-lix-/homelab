@@ -818,12 +818,14 @@ server {
 # Paul's games — public-facing static site at {{ paul_domain }}
 # Uses its own Let's Encrypt cert (the wildcard only covers *.{{ base_domain }}).
 # No local_guard: this is intentionally reachable from the internet.
-# --- PUBLIC: Kobo Sync (Komga /kobo/ only) ---------------------------------
-# Internet-facing so the Kobo syncs away from home. Auth is the long Komga API
-# key in the URL path; ONLY the /kobo/ namespace is proxied (everything else ->
-# 444, no login page, no UI, no API surface). NO local_guard on purpose.
+# --- PUBLIC: Kobo Sync + Emma's Star Shop (single host) --------------------
+# Internet-facing so the Kobo syncs and Emma spends tokens away from home. Two
+# path-scoped locations, everything else -> 444 (no login page, UI, or API
+# surface): /kobo/ -> Komga Kobo Sync (auth = long API key in the URL); /kids* ->
+# manga-scheduler Star Shop (auth = secret ?key=). NO local_guard on purpose.
 # Brute-force/DDoS defence: public_rate_limit (60 r/s backstop) + limit_conn +
-# the nginx-public-auth fail2ban jail (bans IPs racking up 401s / bad API keys).
+# a strict 1 r/s zone on /kids + the nginx-public-auth fail2ban jail (bans IPs
+# racking up 401/403s on either path).
 server {
     listen {{ nginx_port }} ssl;
     server_name kobo.delval.eu;
@@ -859,43 +861,9 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Everything outside /kobo/ is closed on this public host.
-    location / {
-        return 444;
-    }
-}
-
-# --- PUBLIC: Emma's Star Shop (manga-scheduler /kids only) ------------------
-# Internet-facing so Emma can spend tokens from her Kobo away from home. Auth is
-# the secret ?key= magic link; ONLY /kids* is proxied (everything else -> 444).
-# NO local_guard. The key is short, so the STRICT public_auth rate limit +
-# limit_conn + the nginx-public-auth fail2ban jail (bans IPs racking up 403s /
-# bad keys) are the brute-force defence.
-server {
-    listen {{ nginx_port }} ssl;
-    server_name shop.delval.eu;
-    http2 on;
-    ssl_certificate /etc/letsencrypt/live/shop.delval.eu/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/shop.delval.eu/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
-    ssl_prefer_server_ciphers off;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 1d;
-    server_tokens off;
-
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Frame-Options "SAMEORIGIN" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
-    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
-
-    {{ block_dotfile_recon() }}
-    {{ public_rate_limit() }}
-    limit_conn public_conn 10;
-
-    # /kids, /kids-confirm, /kids-deliver only — the secret ?key= is the auth.
-    # Strict per-IP rate on top of the global backstop because the key is short.
+    # Emma's Star Shop (manga-scheduler) — auth = the secret ?key= magic link.
+    # The key is short, so a STRICT per-IP rate limit on top of the backstop.
+    # Covers /kids, /kids-confirm, /kids-deliver (prefix match).
     location /kids {
         limit_req zone=public_auth burst=10 nodelay;
         limit_req_status 429;
@@ -906,7 +874,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Everything outside /kids* is closed on this public host.
+    # Everything outside /kobo/ and /kids* is closed on this public host.
     location / {
         return 444;
     }

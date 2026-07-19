@@ -55,10 +55,10 @@ The repo also manages a separate **mail server VPS** as a different host group /
   - `/v/...` — Goploader encrypted file downloads (open, decryption key in URL)
   - `/` — static landing page for public visitors, Homepage dashboard for local users
   - Everything else is LAN-only via the `geo` block (`local_guard()` macro)
-- **Public token endpoints** (own domains + LE certs) — *path-scoped* public exposures of LAN-only services so a device/child can use them away from home. No `local_guard`; each proxies ONLY its one allowed path and returns **444** for everything else:
+- **Public token endpoint** (single domain + LE cert) — two *path-scoped* public exposures of LAN-only services on one host, so a device/child can use them away from home. No `local_guard`; two `location` blocks and **444** for everything else:
   - Kobo Sync — Komga `/kobo/` namespace (auth: the long Komga API key in the URL)
   - Kids "Star Shop" — manga-scheduler `/kids*` (auth: a secret `?key=` magic link)
-  - Hardened with a per-IP rate-limit backstop + a stricter zone on the key endpoint + per-IP connection caps + a dedicated **fail2ban jail** that bans IPs racking up 401/403s (bad tokens). LAN is whitelisted.
+  - Hardened with a per-IP rate-limit backstop + a stricter zone on the key endpoint + per-IP connection caps + a dedicated **fail2ban jail** (URI-based, host-agnostic) that bans IPs racking up 401/403s (bad tokens). LAN is whitelisted.
 - **Authelia SSO** — centralized authentication and access control:
   - **Forward-auth** (proxy-level) for: arr stack, qBittorrent, Uptime Kuma (dashboard only — status pages are public), Goploader (uploads only — downloads are open)
   - **OIDC** (native integration, `consent_mode: implicit`) for: Grafana, Komga, Immich, Audiobookshelf, Jellyfin. Group enforcement uses `authorization_policies` in the OIDC config (not `access_control` rules, which don't apply to OIDC flows).
