@@ -85,7 +85,8 @@ def process(src, dst, contrast, saturation, brightness):
 def main():
     ap = argparse.ArgumentParser(description="Make Kobo Clara Colour screensaver images")
     ap.add_argument("inputs", nargs="+", help="Pinterest URLs, image files, or folders")
-    ap.add_argument("--out", default="./kobo-screensavers", help="output dir (default ./kobo-screensavers)")
+    ap.add_argument("--out", default="~/Documents/kobo-screensavers",
+                    help="output dir (default ~/Documents/kobo-screensavers; kept out of the repo)")
     ap.add_argument("--contrast", type=float, default=1.15)
     ap.add_argument("--saturation", type=float, default=1.25)
     ap.add_argument("--brightness", type=float, default=1.0)
