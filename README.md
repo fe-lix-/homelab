@@ -184,4 +184,4 @@ Restore helper available at `/opt/backup/restore.sh` on the server.
 
 ## Maintenance
 
-See [MAINTENANCE.md](MAINTENANCE.md) for routine upkeep tasks, disaster recovery steps, and monitoring recommendations.
+See [docs/MAINTENANCE.md](docs/MAINTENANCE.md) for routine upkeep tasks, disaster recovery steps, and monitoring recommendations.
