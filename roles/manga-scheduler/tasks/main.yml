@@ -41,9 +41,11 @@
     mode: "0700"
 
 - name: Generate kids-mode magic-link key (once; never regenerated)
-  # Short (12 hex chars) so it's typeable once on a Kobo's on-screen keyboard;
-  # ample for a LAN-only, low-stakes page. Delete the file + re-run to rotate.
-  ansible.builtin.shell: "umask 077 && openssl rand -hex 6 > {{ manga_scheduler_data_dir }}/kids-key.txt"
+  # 128-bit (32 hex chars): the /kids page is now internet-facing (kobo.delval.eu),
+  # so the key must be brute-infeasible on its own — the rate-limit + fail2ban are
+  # a second layer, not the only one. It's a bookmark, so length doesn't hurt UX.
+  # Delete the file + re-run to rotate.
+  ansible.builtin.shell: "umask 077 && openssl rand -hex 16 > {{ manga_scheduler_data_dir }}/kids-key.txt"
   args:
     creates: "{{ manga_scheduler_data_dir }}/kids-key.txt"
 

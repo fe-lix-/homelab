@@ -116,13 +116,13 @@ geo $rate_limit_key {
 }
 limit_req_zone $rate_limit_key zone=public_global:10m rate=60r/s;
 
-# Per-IP connection cap for the internet-facing token endpoints (kobo./shop.),
+# Per-IP connection cap for the internet-facing token endpoint (kobo.delval.eu),
 # to blunt slow-loris / connection-exhaustion floods.
 limit_conn_zone $binary_remote_addr zone=public_conn:10m;
 
-# Strict rate limit for the public kids-page key endpoint (shop.delval.eu/kids).
-# The key is short, so this throttle + the nginx-public-auth fail2ban jail are
-# the real brute-force defence. LAN-exempt via $rate_limit_key.
+# Strict rate limit for the public kids-page key endpoint (kobo.delval.eu/kids).
+# The key is 128-bit (brute-infeasible on its own); this throttle + the
+# nginx-public-auth fail2ban jail are defence-in-depth. LAN-exempt via $rate_limit_key.
 limit_req_zone $rate_limit_key zone=public_auth:10m rate=1r/s;
 
 # Redirect all HTTP to HTTPS
@@ -861,8 +861,8 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Emma's Star Shop (manga-scheduler) — auth = the secret ?key= magic link.
-    # The key is short, so a STRICT per-IP rate limit on top of the backstop.
+    # Emma's Star Shop (manga-scheduler) — auth = the secret ?key= magic link
+    # (128-bit). Strict per-IP rate limit anyway, as defence-in-depth.
     # Covers /kids, /kids-confirm, /kids-deliver (prefix match).
     location /kids {
         limit_req zone=public_auth burst=10 nodelay;
