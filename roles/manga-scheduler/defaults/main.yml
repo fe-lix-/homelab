@@ -10,13 +10,12 @@ manga_scheduler_ui_port: 5010
 # Deliveries are on-demand and cost tokens (no automatic drip). Each UI member
 # accrues this many tokens per calendar day (unlimited accumulation). Members of
 # manga_scheduler_admin_group deliver for free.
-manga_scheduler_tokens_per_day: 2
+manga_scheduler_tokens_per_day: 1
 # Per-user daily-accrual overrides (username -> tokens/day); everyone else gets
 # manga_scheduler_tokens_per_day. Both case variants accrue as separate records
 # (Authelia forward-auth capitalises; the kids page uses the lowercase name).
-manga_scheduler_tokens_per_day_overrides:
-  emma: 1
-  Emma: 1
+# Currently none — everyone (non-admin) gets the default 1/day.
+manga_scheduler_tokens_per_day_overrides: {}
 manga_scheduler_admin_group: admin
 
 # Kids mode: a low-friction magic-link page (for e-ink Kobo browsers) that maps a
