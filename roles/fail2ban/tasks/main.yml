@@ -33,6 +33,15 @@
     group: root
   notify: Restart fail2ban
 
+- name: Deploy custom filter for public token brute-force (kids key / Komga API key)
+  ansible.builtin.copy:
+    src: filter.d/nginx-public-auth.conf
+    dest: /etc/fail2ban/filter.d/nginx-public-auth.conf
+    mode: "0644"
+    owner: root
+    group: root
+  notify: Restart fail2ban
+
 - name: Deploy jail.local
   ansible.builtin.template:
     src: jail.local.j2

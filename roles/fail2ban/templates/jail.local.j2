@@ -43,3 +43,17 @@ journalmatch = _SYSTEMD_UNIT=docker.service + CONTAINER_NAME=nginx
 maxretry = 3
 findtime = 5m
 bantime  = 24h
+
+# Brute-force guard for the two internet-facing token endpoints:
+#   shop.delval.eu/kids  -> wrong kids-page key returns 403
+#   kobo.delval.eu/kobo/ -> wrong Komga API key returns 401
+# Only reachable externally (LAN is whitelisted via ignoreip), so a handful of
+# failures from one IP is a token-guesser. 5 in 10 min -> 24h ban.
+[nginx-public-auth]
+enabled = true
+filter  = nginx-public-auth
+backend = systemd
+journalmatch = _SYSTEMD_UNIT=docker.service + CONTAINER_NAME=nginx
+maxretry = 5
+findtime = 10m
+bantime  = 24h
