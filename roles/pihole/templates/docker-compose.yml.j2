@@ -18,3 +18,9 @@ services:
       PIHOLE_DNS_2: "{{ pihole_upstream_dns2 }}"
       PIHOLE_UID: "{{ pihole_uid }}"
       PIHOLE_GID: "{{ pihole_gid }}"
+      # Disable FTL per-client rate-limiting. The UniFi gateway forwards ALL LAN
+      # DNS to Pi-hole as a single client (10.0.0.1), so the default 1000/60
+      # limit throttles the ENTIRE network at once during a busy minute — causing
+      # intermittent network-wide DNS blackouts. Per-client limiting is meaningless
+      # when a router aggregates every device into one client.
+      FTLCONF_dns_rateLimit_count: "0"
