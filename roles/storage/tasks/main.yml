@@ -90,6 +90,15 @@
     group: comics-rw
     mode: "2775"
 
+# Felix's personal manga library (mounted into Komga as /data-felix, library "Felix").
+- name: Ensure /srv/comics-felix ownership and setgid mode
+  ansible.builtin.file:
+    path: /srv/comics-felix
+    state: directory
+    owner: svc-media
+    group: comics-rw
+    mode: "2775"
+
 - name: Ensure /srv/uploads/mangas ownership and setgid mode
   ansible.builtin.file:
     path: /srv/uploads/mangas

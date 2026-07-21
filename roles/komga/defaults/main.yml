@@ -5,6 +5,7 @@ komga_data_dir: /opt/komga
 komga_library_dir: /srv/comics
 komga_kobo_library_dir: /srv/comics-kobo   # KCC KEPUB library, synced to Kobo via Kobo Sync
 komga_books_kobo_dir: /srv/books-kobo      # kepubify'd novel library (books-kobo role), synced to Kobo
+komga_felix_library_dir: /srv/comics-felix # Felix's personal manga library (separate Komga library "Felix")
 komga_user: svc-media
 komga_admin_email: ""
 komga_admin_password: ""

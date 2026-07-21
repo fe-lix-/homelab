@@ -13,6 +13,7 @@ services:
       - "{{ komga_library_dir }}:/data"
       - "{{ komga_kobo_library_dir }}:/data-kobo"
       - "{{ komga_books_kobo_dir }}:/data-books"
+      - "{{ komga_felix_library_dir }}:/data-felix"
     user: "{{ komga_uid }}:{{ komga_gid }}"
     networks:
       - komga-net          # shared with komf (metadata fetcher) for API access
