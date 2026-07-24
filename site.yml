@@ -80,6 +80,8 @@
       tags: kcc-converter
     - role: books-kobo
       tags: books-kobo
+    - role: samba-portal
+      tags: samba-portal
     - role: ntfy
       tags: ntfy
     - role: ddns

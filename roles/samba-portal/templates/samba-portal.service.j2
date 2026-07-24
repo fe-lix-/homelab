@@ -1,0 +1,20 @@
+[Unit]
+Description=Samba self-service password portal
+After=network.target smbd.service
+Wants=smbd.service
+
+[Service]
+Type=simple
+User={{ samba_portal_user }}
+ExecStart=/usr/bin/python3 {{ samba_portal_data_dir }}/samba-portal.py
+Restart=on-failure
+RestartSec=5
+# NB: NoNewPrivileges must stay UNSET — the service escalates to the root helper
+# via sudo, which NoNewPrivileges would block. The privilege boundary is instead
+# the strict NOPASSWD sudoers rule (one root-owned script) + the helper's own
+# username validation.
+ProtectHome=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

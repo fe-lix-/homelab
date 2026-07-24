@@ -34,6 +34,7 @@ Ansible playbook to provision and manage a single Ubuntu server running Docker-b
 | Minecraft | PaperMC 1.20.4 (offline mode, LAN only) | `YOUR_SERVER_IP:25565` (direct TCP, UFW-restricted to 10.0.0.0/8) |
 | Homepage | Dashboard | `homelab.example.com` |
 | manga-scheduler | Drip-feeds manga from `/srv/uploads/mangas` into Komga library every 2 days (systemd timer) | — |
+| Samba Portal | Self-service page for users to (re)generate their own Samba password and auto-provision a read-only SMB account | `samba.homelab.example.com` |
 | ntfy | Push notification server (publicly accessible, ntfy built-in auth) | `ntfy.homelab.example.com` |
 | Screen Time | Kids screen time monitoring via Pi-hole DNS analysis | `screentime.homelab.example.com` |
 | Paul's Games | Static public-facing games site, content uploaded via the Samba `games` share (`@games-rw`) | `paul.delval.eu` (own LE cert, public-facing) |

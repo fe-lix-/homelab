@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""Privileged Samba helper for the self-service password portal.
+
+Runs as root (invoked by the unprivileged web service via a locked-down NOPASSWD
+sudoers entry). This is the security boundary: it accepts only two subcommands
+for a strictly-validated username and nothing else.
+
+  status <user>   -> JSON {exists, last_set, groups}
+  reset  <user>   -> reads the new password from stdin (never argv, so it can't
+                     leak via `ps`), creates the POSIX+Samba account if missing
+                     (nologin, default groups, private home dir), sets the Samba
+                     password, and prints JSON {created, last_set}.
+
+The username originates from Authelia's Remote-User header, but is re-validated
+here against a strict allowlist regex so nothing but [a-z0-9_-] can ever reach
+useradd/smbpasswd.
+"""
+import grp
+import json
+import os
+import pwd
+import re
+import subprocess
+import sys
+
+RW_GROUP = "{{ samba_rw_group }}"
+DEFAULT_GROUPS = {{ samba_portal_default_groups | to_json }}
+HOMES_PATH = "{{ samba_homes_path }}"
+USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+
+
+def out(obj, code=0):
+    print(json.dumps(obj))
+    sys.exit(code)
+
+
+def fail(msg, code=1):
+    out({"ok": False, "error": msg}, code)
+
+
+def user_exists(user):
+    try:
+        pwd.getpwnam(user)
+        return True
+    except KeyError:
+        return False
+
+
+def smb_exists(user):
+    r = subprocess.run(["pdbedit", "-L"], capture_output=True, text=True)
+    return any(line.split(":", 1)[0] == user for line in r.stdout.splitlines())
+
+
+def password_last_set(user):
+    r = subprocess.run(["pdbedit", "-Lv", user], capture_output=True, text=True)
+    for line in r.stdout.splitlines():
+        if line.startswith("Password last set"):
+            return line.split(":", 1)[1].strip()
+    return None
+
+
+def group_names(user):
+    if not user_exists(user):
+        return []
+    r = subprocess.run(["id", "-nG", user], capture_output=True, text=True)
+    return r.stdout.split()
+
+
+def do_status(user):
+    exists = smb_exists(user)
+    out({
+        "ok": True,
+        "exists": exists,
+        "last_set": password_last_set(user) if exists else None,
+        "groups": group_names(user),
+    })
+
+
+def do_reset(user):
+    password = sys.stdin.readline().rstrip("\n")
+    if len(password) < 8:
+        fail("password too short")
+
+    created = False
+    if not user_exists(user):
+        home = os.path.join(HOMES_PATH, user)
+        subprocess.run(
+            ["useradd", "--no-create-home", "--home-dir", home,
+             "--shell", "/usr/sbin/nologin", user],
+            check=True, capture_output=True, text=True,
+        )
+        created = True
+
+    # Ensure default group membership (idempotent).
+    for group in DEFAULT_GROUPS:
+        subprocess.run(["usermod", "-aG", group, user],
+                       check=True, capture_output=True, text=True)
+
+    # Private read-write home for the [homes] share (owner:rw-group, 0700).
+    home = os.path.join(HOMES_PATH, user)
+    if not os.path.isdir(home):
+        os.makedirs(home, exist_ok=True)
+    os.chown(home, pwd.getpwnam(user).pw_uid, grp.getgrnam(RW_GROUP).gr_gid)
+    os.chmod(home, 0o700)
+
+    # Set the Samba password (-a adds or updates; password piped via stdin).
+    p = subprocess.run(
+        ["smbpasswd", "-s", "-a", user],
+        input="{}\n{}\n".format(password, password),
+        capture_output=True, text=True,
+    )
+    if p.returncode != 0:
+        fail("smbpasswd failed: " + (p.stderr.strip() or "unknown error"))
+    subprocess.run(["smbpasswd", "-e", user], capture_output=True, text=True)
+
+    out({"ok": True, "created": created, "last_set": password_last_set(user)})
+
+
+def main():
+    if len(sys.argv) != 3:
+        fail("usage: samba-helper.py <status|reset> <user>")
+    cmd, user = sys.argv[1], sys.argv[2]
+    if not USERNAME_RE.match(user):
+        fail("invalid username")
+    try:
+        if cmd == "status":
+            do_status(user)
+        elif cmd == "reset":
+            do_reset(user)
+        else:
+            fail("unknown command")
+    except subprocess.CalledProcessError as e:
+        fail((e.stderr or str(e)).strip())
+
+
+if __name__ == "__main__":
+    main()

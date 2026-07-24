@@ -237,6 +237,10 @@ access_control:
     - domain: "lldap.{{ base_domain }}"
       policy: one_factor
 
+    # Samba password portal — any authenticated user (self-service SMB password)
+    - domain: "samba.{{ base_domain }}"
+      policy: one_factor
+
     # Admin-only services
     - domain:
         - "uptime.{{ base_domain }}"

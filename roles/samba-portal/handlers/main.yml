@@ -1,0 +1,9 @@
+---
+- name: Reload systemd
+  ansible.builtin.systemd:
+    daemon_reload: true
+
+- name: Restart samba-portal
+  ansible.builtin.systemd:
+    name: samba-portal.service
+    state: restarted

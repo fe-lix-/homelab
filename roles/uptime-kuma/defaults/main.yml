@@ -52,6 +52,8 @@ uptime_kuma_monitors:
     url: "http://host-gateway:{{ lldap_port }}"
   - name: Authelia
     url: "http://host-gateway:{{ authelia_port }}"
+  - name: Samba Portal
+    url: "http://host-gateway:{{ samba_portal_port }}/health"
   - name: Pi-hole
     url: "http://host-gateway:{{ pihole_port }}/admin"
   - name: mitmproxy

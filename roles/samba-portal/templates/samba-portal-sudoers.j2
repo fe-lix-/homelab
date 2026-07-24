@@ -1,0 +1,5 @@
+# Managed by Ansible (samba-portal role). Lets the unprivileged web service run
+# ONLY the root helper — which itself only does `status`/`reset` for a strictly
+# validated username. The helper is root-owned and not writable by the service
+# user, so allowing any args to it is safe.
+{{ samba_portal_user }} ALL=(root) NOPASSWD: /usr/bin/python3 {{ samba_portal_data_dir }}/samba-helper.py *

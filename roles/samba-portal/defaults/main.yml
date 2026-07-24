@@ -1,0 +1,24 @@
+---
+# Self-service Samba password portal. An Authelia-protected page (LAN/VPN only)
+# where any authenticated LLDAP user can (re)generate their own Samba password —
+# shown once — and auto-provision a Samba account with default read-only access
+# if they don't have one yet.
+#
+# Architecture: an unprivileged web service (samba-portal.py, runs as
+# svc-samba-portal) proxies the two privileged operations to a root helper
+# (samba-helper.py) via a locked-down NOPASSWD sudoers entry. The helper is the
+# only thing that can touch Samba/POSIX accounts, and it can only do `status`
+# and `reset` for a strictly-validated username.
+samba_portal_port: 5013
+samba_portal_data_dir: /opt/samba-portal
+samba_portal_user: svc-samba-portal
+
+# Length of the generated password in bytes of entropy (hex-encoded, so the
+# printed password is twice this many characters). 12 bytes = 24 hex chars = 96-bit.
+samba_portal_password_bytes: 12
+
+# Groups a freshly auto-provisioned account is added to. Read-only by default —
+# grants read access to the [srv] share (plus a private read-write [homes] share).
+# Promote to samba_rw_group manually for users who need to write to /srv.
+samba_portal_default_groups:
+  - "{{ samba_ro_group }}"
