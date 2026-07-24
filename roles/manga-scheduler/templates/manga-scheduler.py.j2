@@ -217,6 +217,7 @@ def _refund_token(user: str) -> None:
     """Return one token to a member whose paid delivery could not be fulfilled.
     Mirrors the UI's refund() but stands alone so the worker never loses a spent
     token when a queued request turns out to be undeliverable."""
+    user = (user or "").strip().lower()   # single lowercase token key (see UI _norm)
     TOKENS_FILE.parent.mkdir(parents=True, exist_ok=True)
     f = open(TOKENS_FILE, "a+")
     try:

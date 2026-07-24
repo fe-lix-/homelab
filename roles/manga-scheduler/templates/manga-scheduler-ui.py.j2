@@ -169,14 +169,18 @@ def _tokens_locked():
         f.close()
 
 
-def _rate_for(user: str) -> int:
-    """This user's daily token accrual — a per-user override, else the default."""
+def _rate_for(user: str, rec: dict = None) -> int:
+    """This user's daily token accrual. Precedence: a runtime per-user rate set
+    by an admin in the UI (stored on the user's token record as "rate"), then a
+    deploy-time override, then the global default."""
+    if rec is not None and rec.get("rate") is not None:
+        return rec["rate"]
     return TOKENS_PER_DAY_OVERRIDES.get(user, TOKENS_PER_DAY)
 
 
 def _apply_accrual(user: str, rec: dict) -> None:
     """Grant this user's daily rate for each calendar day since last_grant."""
-    rate = _rate_for(user)
+    rate = _rate_for(user, rec)
     today = datetime.date.today().isoformat()
     last = rec.get("last_grant")
     if last is None:
@@ -218,9 +222,17 @@ def refund(user: str, n: int = 1) -> None:
         rec["balance"] = rec.get("balance", 0) + n
 
 
+def _norm(user: str) -> str:
+    """Canonical token-store key: the lowercased username. A person therefore has
+    ONE balance whether they arrive via Authelia forward-auth (which capitalises
+    the display name) or the lowercase /kids magic-link identity."""
+    return (user or "").strip().lower()
+
+
 def user_ctx(headers) -> dict:
-    """Identify the requester from Authelia forward-auth headers + their balance."""
-    user = headers.get("Remote-Name") or headers.get("Remote-User") or "Unknown"
+    """Identify the requester from Authelia forward-auth headers + their balance.
+    Keyed on Remote-User (the LLDAP uid) so it matches the kids page; lowercased."""
+    user = _norm(headers.get("Remote-User") or headers.get("Remote-Name") or "unknown")
     groups = [g.strip() for g in (headers.get("Remote-Groups") or "").split(",") if g.strip()]
     is_admin = ADMIN_GROUP in groups
     return {"user": user, "is_admin": is_admin, "balance": get_balance(user)}
@@ -282,7 +294,7 @@ def deliver_series(user: str, series: str, is_admin: bool) -> tuple:
     if not is_admin:
         spent, balance = try_spend(user)
         if not spent:
-            return False, f"Not enough tokens — you have {balance}. You get {_rate_for(user)}/day.", balance
+            return False, f"Not enough tokens — you have {balance}. You get {get_rate(user)}/day.", balance
         charged = True
 
     enqueue(series, user, charged)
@@ -341,6 +353,46 @@ def grant_tokens(user: str, n: int) -> int:
         _apply_accrual(user, rec)
         rec["balance"] += n
         return rec["balance"]
+
+
+# --- Admin token management (from the UI, admin group only) ---
+
+USERNAME_RE = re.compile(r"^[A-Za-z0-9 ._-]{1,64}$")
+
+
+def valid_username(user: str) -> bool:
+    """A token-record key is just JSON, but keep it to sane identifier chars so an
+    admin can't fat-finger junk (or markup) into the store."""
+    return bool(user) and bool(USERNAME_RE.match(user))
+
+
+def get_rate(user: str) -> int:
+    """Effective daily accrual for a user, honouring any runtime override."""
+    with _tokens_locked() as data:
+        return _rate_for(user, data["users"].get(user))
+
+
+def set_rate(user: str, rate: int) -> int:
+    """Admin: set a user's runtime daily-accrual rate. Prospective — pending
+    accrual is settled at the OLD rate first so the change never retroactively
+    rewrites already-granted days. Returns the new rate."""
+    with _tokens_locked() as data:
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": None})
+        _apply_accrual(user, rec)
+        rec["rate"] = rate
+        return rate
+
+
+def list_users() -> list[dict]:
+    """All known members with settled balance + effective daily rate, for the
+    admin panel. Sorted case-insensitively by name."""
+    with _tokens_locked() as data:
+        result = []
+        for name, rec in data["users"].items():
+            _apply_accrual(name, rec)
+            result.append({"user": name, "balance": rec.get("balance", 0),
+                           "rate": _rate_for(name, rec)})
+    return sorted(result, key=lambda x: x["user"].lower())
 
 
 def get_delivery_log(lines: int = 500) -> list[dict]:
@@ -651,7 +703,7 @@ def render_delivery(msg: str = "", error: bool = False, ctx: dict = None) -> str
         token_html = (
             f"<span>You: <strong>{escape(ctx['user'])}</strong></span>"
             f"<span>Tokens: <strong>{ctx['balance']}</strong> "
-            f"<span style='color:#a0aec0'>(+{_rate_for(ctx['user'])}/day)</span></span>"
+            f"<span style='color:#a0aec0'>(+{get_rate(ctx['user'])}/day)</span></span>"
         )
         can_deliver = ctx["balance"] >= 1
 
@@ -703,6 +755,45 @@ def render_delivery(msg: str = "", error: bool = False, ctx: dict = None) -> str
         "</tr></thead><tbody>\n" + rows_html + "\n</tbody></table>"
     )
 
+    # Admin: per-member token management (grant tokens, set daily rate)
+    admin_html = ""
+    if ctx["is_admin"]:
+        urows = []
+        for u in list_users():
+            su = escape(u["user"])
+            urows.append(
+                "<tr>"
+                f"<td><strong>{su}</strong></td>"
+                f"<td>{u['balance']}</td>"
+                f"<td>{u['rate']}/day</td>"
+                "<td class='actions'>"
+                "<form method='post' action='/admin-grant'>"
+                f"<input type='hidden' name='user' value='{su}'>"
+                "<input type='number' name='n' value='1' min='-100' max='100' style='width:4rem'>"
+                "<button type='submit'>Give</button></form>"
+                "<form method='post' action='/admin-set-rate'>"
+                f"<input type='hidden' name='user' value='{su}'>"
+                f"<input type='number' name='rate' value='{u['rate']}' min='0' max='100' style='width:4rem'>"
+                "<button type='submit'>Set /day</button></form>"
+                "</td></tr>"
+            )
+        urows_html = "\n".join(urows) if urows else \
+            "<tr><td colspan='4' class='empty'>No members yet.</td></tr>"
+        admin_html = (
+            "<div style='margin-top:1.5rem'><h2>Members (admin)</h2>"
+            "<table><thead><tr>"
+            "<th>User</th><th>Tokens</th><th>Per day</th><th>Actions</th>"
+            "</tr></thead><tbody>\n" + urows_html + "\n</tbody></table>"
+            "<form method='post' action='/admin-grant' "
+            "style='margin-top:.6rem;display:flex;gap:.4rem;align-items:center;flex-wrap:wrap'>"
+            "<span>Grant to a new user:</span>"
+            "<input type='text' name='user' placeholder='username' required "
+            "pattern='[A-Za-z0-9 ._-]{1,64}' style='width:11rem'>"
+            "<input type='number' name='n' value='1' min='-100' max='100' style='width:4rem'>"
+            "<button type='submit'>Give tokens</button></form>"
+            "</div>"
+        )
+
     # Delivery log
     if delivery_runs:
         log_rows = []
@@ -722,7 +813,7 @@ def render_delivery(msg: str = "", error: bool = False, ctx: dict = None) -> str
     else:
         log_html = "<div style='margin-top:1.5rem'><h2>Delivery Log</h2><p class='empty'>No deliveries recorded yet.</p></div>"
 
-    return _page("Delivery", "Delivery", info + table + log_html, msg, error)
+    return _page("Delivery", "Delivery", info + table + admin_html + log_html, msg, error)
 
 
 # --- Download page ---
@@ -1120,6 +1211,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_kids_deliver(params)
         elif self.path == "/grant":
             self._handle_grant(params)
+        elif self.path == "/admin-grant":
+            self._handle_admin_grant(params)
+        elif self.path == "/admin-set-rate":
+            self._handle_admin_set_rate(params)
         elif self.path == "/delete-series":
             self._handle_delete_series(params)
         elif self.path == "/schedule":
@@ -1163,7 +1258,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not valid_grant_key(params.get("key", [""])[0]):
             self.send_json({"error": "forbidden"}, 403)
             return
-        user = params.get("user", [""])[0].strip() or KIDS_USER
+        user = _norm(params.get("user", [""])[0]) or KIDS_USER
         try:
             n = int(params.get("n", ["1"])[0])
         except (ValueError, TypeError):
@@ -1171,6 +1266,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
         n = max(1, min(n, 10))
         balance = grant_tokens(user, n)
         self.send_json({"ok": True, "user": user, "granted": n, "balance": balance})
+
+    def _handle_admin_grant(self, params: dict):
+        """Admin (Authelia admin group): give/deduct tokens for a member."""
+        ctx = user_ctx(self.headers)
+        if not ctx["is_admin"]:
+            self.send_redirect("/?msg=" + urllib.parse.quote("Not authorised") + "&err=1")
+            return
+        user = _norm(params.get("user", [""])[0])
+        if not valid_username(user):
+            self.send_redirect("/?msg=" + urllib.parse.quote("Invalid username") + "&err=1")
+            return
+        try:
+            n = int(params.get("n", ["1"])[0])
+        except (ValueError, TypeError):
+            n = 1
+        n = max(-100, min(n, 100))
+        balance = grant_tokens(user, n)
+        verb, prep = ("Gave", "to") if n >= 0 else ("Removed", "from")
+        # (username already normalised to lowercase above)
+        self.send_redirect("/?msg=" + urllib.parse.quote(
+            f"{verb} {abs(n)} token(s) {prep} {user} — balance now {balance}."))
+
+    def _handle_admin_set_rate(self, params: dict):
+        """Admin (Authelia admin group): set a member's daily token rate."""
+        ctx = user_ctx(self.headers)
+        if not ctx["is_admin"]:
+            self.send_redirect("/?msg=" + urllib.parse.quote("Not authorised") + "&err=1")
+            return
+        user = _norm(params.get("user", [""])[0])
+        if not valid_username(user):
+            self.send_redirect("/?msg=" + urllib.parse.quote("Invalid username") + "&err=1")
+            return
+        try:
+            rate = int(params.get("rate", ["1"])[0])
+        except (ValueError, TypeError):
+            rate = 1
+        rate = max(0, min(rate, 100))
+        set_rate(user, rate)
+        self.send_redirect("/?msg=" + urllib.parse.quote(
+            f"Set {user}'s daily tokens to {rate}/day."))
 
     def _handle_delete_series(self, params: dict):
         series = params.get("series", [""])[0].strip()
