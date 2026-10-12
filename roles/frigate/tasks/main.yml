@@ -1,0 +1,42 @@
+---
+- name: Create Frigate directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - "{{ frigate_data_dir }}"
+    - "{{ frigate_data_dir }}/config"
+    - "{{ frigate_recordings_dir }}"
+
+- name: Deploy Frigate docker-compose
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ frigate_data_dir }}/docker-compose.yml"
+    mode: "0644"
+  notify: Restart frigate
+
+- name: Deploy Frigate config (first deploy only — edit via UI or directly on disk)
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: "{{ frigate_data_dir }}/config/config.yml"
+    mode: "0644"
+    force: false
+  no_log: true
+
+- name: Allow RTSP and WebRTC ports from LAN
+  community.general.ufw:
+    rule: allow
+    port: "{{ item.port }}"
+    proto: "{{ item.proto }}"
+    src: 10.0.0.0/8
+    comment: "Frigate {{ item.name }}"
+  loop:
+    - {port: "{{ frigate_rtsp_port }}", proto: tcp, name: RTSP}
+    - {port: "{{ frigate_webrtc_port }}", proto: tcp, name: WebRTC-TCP}
+    - {port: "{{ frigate_webrtc_port }}", proto: udp, name: WebRTC-UDP}
+
+- name: Start Frigate
+  community.docker.docker_compose_v2:
+    project_src: "{{ frigate_data_dir }}"
+    state: present

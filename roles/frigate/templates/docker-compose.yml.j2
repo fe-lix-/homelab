@@ -1,0 +1,30 @@
+---
+services:
+  frigate:
+    image: ghcr.io/blakeblackshear/frigate:{{ frigate_version }}
+    container_name: frigate
+    restart: unless-stopped
+    privileged: true
+    shm_size: "512mb"
+    ports:
+      - "127.0.0.1:{{ frigate_port }}:5000"
+      - "127.0.0.1:1984:1984"
+      - "0.0.0.0:{{ frigate_rtsp_port }}:8554"
+      - "0.0.0.0:{{ frigate_webrtc_port }}:8555/tcp"
+      - "0.0.0.0:{{ frigate_webrtc_port }}:8555/udp"
+    volumes:
+      - /etc/localtime:/etc/localtime:ro
+      - "{{ frigate_data_dir }}/config:/config"
+      - "{{ frigate_recordings_dir }}:/media/frigate"
+    devices:
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    environment:
+      TZ: "{{ timezone }}"
+      LIBVA_DRIVER_NAME: radeonsi
+
+networks:
+  default:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: "172.32.0.0/24"

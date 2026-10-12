@@ -1,0 +1,45 @@
+auth:
+  enabled: false
+
+mqtt:
+  enabled: false
+
+detectors:
+  cpu1:
+    type: cpu
+    num_threads: 3
+
+ffmpeg:
+  hwaccel_args: preset-vaapi
+
+go2rtc:
+  streams:
+{% for cam in frigate_cameras %}
+    {{ cam.name }}:
+      - rtsp://{{ cam.username }}:{{ cam.password }}@{{ cam.host }}:554/h264Preview_01_main
+    {{ cam.name }}_sub:
+      - rtsp://{{ cam.username }}:{{ cam.password }}@{{ cam.host }}:554/h264Preview_01_sub
+{% endfor %}
+
+cameras:
+{% for cam in frigate_cameras %}
+  {{ cam.name }}:
+    ffmpeg:
+      inputs:
+        - path: rtsp://127.0.0.1:8554/{{ cam.name }}
+          roles:
+            - record
+        - path: rtsp://127.0.0.1:8554/{{ cam.name }}_sub
+          roles:
+            - detect
+    detect:
+      enabled: true
+    record:
+      enabled: true
+      retain:
+        days: 7
+        mode: motion
+      events:
+        retain:
+          default: 30
+{% endfor %}

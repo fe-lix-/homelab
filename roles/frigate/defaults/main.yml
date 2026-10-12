@@ -1,0 +1,10 @@
+---
+frigate_version: "0.14.1"
+frigate_port: 5000
+frigate_rtsp_port: 8554
+frigate_webrtc_port: 8555
+frigate_data_dir: /opt/frigate
+frigate_recordings_dir: /srv/nvr
+# Override to NUC IP when migrating to barad-dur
+frigate_upstream: "127.0.0.1"
+frigate_cameras: []
