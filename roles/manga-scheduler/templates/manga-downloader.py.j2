@@ -44,9 +44,18 @@ DELAY = {{ manga_downloader_delay }}
 {% raw %}
 COMIC_EXTENSIONS = {".cbz", ".cbr", ".pdf"}
 OUO_LINK_RE = re.compile(r'href=["\']?(https://ouo\.(?:io|press)/[A-Za-z0-9]+)["\']?')
+# Full download button: the volume label is the anchor's inner text
+# (e.g. <a href="ouo.io/XXXX">Shangri-La Frontier Tomo 21</a>). terabox mirror
+# anchors have a non-ouo href so they're ignored.
+OUO_ANCHOR_RE = re.compile(
+    r'<a\b[^>]*\bhref=["\']?(https://ouo\.(?:io|press)/[A-Za-z0-9]+)["\']?[^>]*>(.*?)</a>',
+    re.I | re.S)
 SLUG_CLEANUP_RE = re.compile(r"-(?:completo|complete|full)$", re.IGNORECASE)
 OUO_TIMEOUT = 60000  # ms — max time to wait for ouo.io redirect
-OUO_RETRIES = 3  # ouo.io ad redirects are flaky; retry resolution with a fresh session
+OUO_RETRIES = 6  # ouo.io serves an ad-redirect (~half the time) instead of the real
+# captcha page even headed; each retry is a fresh session, so more attempts ~ higher
+# per-volume success (3 -> ~88%, 6 -> ~98%). A re-run also self-heals via the
+# already-own skip, so leftover failures are cheap to mop up.
 # The ouo.io flow legitimately ends at the file host. Anything else (google.com,
 # other ad/search sponsors) is a hijack and must not be treated as the destination.
 DEST_HOST_HINTS = ("fireload",)
@@ -189,95 +198,62 @@ def _is_valid_destination(url: str) -> bool:
 
 
 def _ouo_remove_overlays_and_click(page) -> bool:
-    """Remove overlay iframes, find a button/form, and click it. Return True if clicked."""
-    # Dump debug info on first call
+    """Click ouo's continue button (#btn-main — "I'm a human", then "Get Link").
+
+    Deliberately NO overlay-stripping and NO form-submit fallback. A JS click on
+    the specific #btn-main ignores any ad overlay covering it; whereas stripping
+    overlays diverted the flow to an ad interstitial, and the old form fallback
+    grabbed ouo's header URL-shortener form and dead-ended on ouo.io/shorten
+    ({"error": "...not a valid URL"}). Step 1 carries a Cloudflare Turnstile that
+    auto-solves in the headed browser during the caller's countdown wait. Returns
+    True if the button was clicked."""
     try:
         page.screenshot(path=str(DATA_DIR / "ouo-debug.png"))
-        html_dump = page.content()
-        (DATA_DIR / "ouo-debug.html").write_text(html_dump[:50000])
-        log(f"Debug screenshot and HTML saved to {DATA_DIR}")
+        (DATA_DIR / "ouo-debug.html").write_text(page.content()[:50000])
     except Exception as e:
         log(f"Debug dump failed: {e}")
 
-    # Remove ALL iframes and overlay divs that intercept pointer events.
-    # The page may navigate (ad/countdown redirect) mid-evaluate, destroying the
-    # execution context — treat that as "the page already moved on" and bail.
     try:
-        removed = page.evaluate("""
-            (() => {
-                let count = 0;
-                // Remove all iframes (ouo.io uses them as overlays)
-                document.querySelectorAll('iframe').forEach(el => { el.remove(); count++; });
-                // Remove divs with data-shb attribute (known overlay container)
-                document.querySelectorAll('div[data-shb]').forEach(el => { el.remove(); count++; });
-                // Remove any fixed/absolute positioned overlays covering the page
-                document.querySelectorAll('div').forEach(el => {
-                    const style = window.getComputedStyle(el);
-                    if ((style.position === 'fixed' || style.position === 'absolute') &&
-                        parseInt(style.zIndex) > 100 &&
-                        el.offsetWidth > 500 && el.offsetHeight > 300) {
-                        el.remove(); count++;
-                    }
-                });
-                return count;
-            })()
-        """)
-    except PlaywrightError as e:
-        log(f"Overlay removal skipped (page navigated): {e}")
+        page.wait_for_selector("#btn-main", timeout=12000)
+    except PlaywrightTimeout:
+        log("WARNING: #btn-main not present this step")
         return False
-    log(f"Removed {removed} overlay element(s)")
-    time.sleep(0.5)
-
-    button_selectors = [
-        "#btn-main",
-        "button:has-text('I\\'m human')",
-        "button:has-text('I am human')",
-        "button:has-text('Verify')",
-        "button:has-text('Continue')",
-        "form button[type='submit']",
-        "input[type='submit']",
-    ]
-
-    for selector in button_selectors:
-        try:
-            btn = page.wait_for_selector(selector, timeout=3000)
-            if btn and btn.is_visible():
-                box = btn.bounding_box()
-                if box:
-                    _human_mouse_move(page, int(box["x"] + box["width"] / 2),
-                                      int(box["y"] + box["height"] / 2))
-                # Use JS click directly — most reliable against overlays
-                btn.evaluate("el => el.click()")
-                log(f"Clicked (JS): {selector}")
-                return True
-        except PlaywrightTimeout:
-            continue
-
-    # Fallback: JS form submit — but ONLY for a form that stays on ouo. A bare
-    # document.querySelector('form').submit() will happily submit an ad page's
-    # Google search box, navigating to google.com/webhp (a dead-end hijack).
     try:
-        submitted = page.evaluate("""
-            (() => {
-                for (const f of document.querySelectorAll('form')) {
-                    const action = (f.getAttribute('action') || '').toLowerCase();
-                    if (action === '' || action.startsWith('/') ||
-                        action.startsWith('#') || action.includes('ouo.')) {
-                        f.submit();
-                        return true;
-                    }
-                }
-                return false;
-            })()
-        """)
-    except PlaywrightError as e:
-        log(f"Form submit skipped (page navigated): {e}")
-        return False
-    if submitted:
-        log("Submitted ouo form via JS (fallback)")
+        page.eval_on_selector("#btn-main", "el => el.click()")
+        log("Clicked (JS): #btn-main")
         return True
+    except PlaywrightError as e:
+        log(f"btn-main click failed: {e}")
+        return False
 
-    return False
+
+# Automation fingerprints hidden so score/behaviour-based bot checks pass.
+STEALTH_JS = (
+    "Object.defineProperty(navigator,'webdriver',{get:()=>undefined});"
+    "window.chrome={runtime:{}};"
+    "Object.defineProperty(navigator,'languages',{get:()=>['es-ES','es','en-US','en']});"
+    "Object.defineProperty(navigator,'plugins',{get:()=>[1,2,3,4,5]});"
+)
+
+
+def _launch_stealth(pw):
+    """Headed Chromium (needs a display — the UI launches the downloader via
+    xvfb-run) with automation flags hidden, plus a context carrying the stealth
+    init script. Both ouo.io's ad-gate and Fireload's invisible reCAPTCHA
+    hijack/deny headless browsers, so the whole scrape runs headed. Returns
+    (browser, context)."""
+    browser = pw.chromium.launch(headless=False, args=[
+        "--no-sandbox", "--disable-dev-shm-usage",
+        "--disable-blink-features=AutomationControlled",
+    ])
+    context = browser.new_context(
+        viewport={"width": 1366, "height": 768},
+        user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+        locale="es-ES", timezone_id="Europe/Madrid",
+        accept_downloads=True, ignore_https_errors=True,
+    )
+    context.add_init_script(STEALTH_JS)
+    return browser, context
 
 
 def resolve_ouo_link(ouo_url: str) -> str:
@@ -290,11 +266,7 @@ def resolve_ouo_link(ouo_url: str) -> str:
     log(f"Resolving ouo.io: {ouo_url}")
 
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-        )
+        browser, context = _launch_stealth(pw)
         page = context.new_page()
 
         try:
@@ -324,9 +296,21 @@ def resolve_ouo_link(ouo_url: str) -> str:
                     page.mouse.move(random.randint(100, 1100), random.randint(100, 600))
                     time.sleep(random.uniform(0.1, 0.3))
 
-                # Wait for countdown timer to finish (ouo.io shows "Your link is almost ready")
-                log("Waiting for countdown timer...")
-                time.sleep(10)
+                # Wait for Cloudflare Turnstile to solve: it writes a token into
+                # the hidden #x-token field. Clicking before the token is filled
+                # causes ouo.io to reject the POST and redirect to an ad page
+                # (frs2c.com, google.com, etc.). Poll until the value is non-empty,
+                # with a hard cap of OUO_TIMEOUT.
+                log("Waiting for Turnstile token (x-token)...")
+                try:
+                    page.wait_for_function(
+                        "() => { const t = document.getElementById('x-token'); "
+                        "return t && t.value && t.value.length > 0; }",
+                        timeout=OUO_TIMEOUT,
+                    )
+                    log("Turnstile solved.")
+                except PlaywrightTimeout:
+                    log("WARNING: x-token still empty after timeout, proceeding anyway")
 
                 # Remove overlays and click
                 clicked = _ouo_remove_overlays_and_click(page)
@@ -372,16 +356,55 @@ def resolve_ouo_link(ouo_url: str) -> str:
 
 # --- Page parsing ---
 
-def parse_ouo_links(html: str) -> list[str]:
-    """Extract deduplicated ouo.io links from HTML."""
+# Volume numbers a download button provides, parsed from the label text that sits
+# just before it (e.g. "Tomos [17-19]", "Tomo 20", "T27"). Used to skip links whose
+# volumes we already own.
+_VOL_RANGE_RE = re.compile(r"\[\s*0*(\d+)\s*-\s*0*(\d+)\s*\]")
+_VOL_SINGLE_RE = re.compile(r"\b(?:Tomos?|Volumen|Volume|Vol|T)\.?\s*0*(\d+)\b", re.I)
+# Volume number from an on-disk filename like "Volume 20.cbz" / "Tomo 20.cbz".
+_VOL_FILE_RE = re.compile(r"(?:Volume|Volumen|Tomo|Vol)\.?\s*0*(\d+)", re.I)
+
+
+def _volumes_from_label(label: str) -> set:
+    """Parse the volume number(s) a label denotes. Ranges like '[17-19]' expand;
+    otherwise every 'Tomo N'/'T N' token counts. Empty set = not parseable (the
+    caller then treats the link as unknown and downloads it rather than risk a miss)."""
+    rng = _VOL_RANGE_RE.search(label)
+    if rng:
+        a, b = int(rng.group(1)), int(rng.group(2))
+        if a <= b and b - a < 500:
+            return set(range(a, b + 1))
+    return {int(n) for n in _VOL_SINGLE_RE.findall(label)}
+
+
+def parse_ouo_links(html: str) -> list[dict]:
+    """Extract deduplicated ouo download links in page order, each with the volume
+    label/numbers taken from the ~90 chars of text before its button. Returns
+    [{url, label, volumes(set)}]."""
     seen = set()
     links = []
-    for match in OUO_LINK_RE.finditer(html):
+    for match in OUO_ANCHOR_RE.finditer(html):
         url = match.group(1)
-        if url not in seen:
-            seen.add(url)
-            links.append(url)
+        if url in seen:
+            continue
+        seen.add(url)
+        label = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", match.group(2))).strip()
+        links.append({"url": url, "label": label, "volumes": _volumes_from_label(label)})
     return links
+
+
+def _owned_volumes(series: str) -> set:
+    """Volume numbers already obtained for this series — delivered to Komga or still
+    staged in the upload dir — parsed from 'Volume N.cbz' filenames."""
+    owned = set()
+    for base in (COMICS_DIR / series, UPLOAD_DIR / series):
+        if base.is_dir():
+            for f in base.iterdir():
+                if f.suffix.lower() in COMIC_EXTENSIONS:
+                    m = _VOL_FILE_RE.search(f.stem)
+                    if m:
+                        owned.add(int(m.group(1)))
+    return owned
 
 
 def series_name_from_url(url: str) -> str:
@@ -399,13 +422,16 @@ def download_from_fireload(fireload_url: str, dest_dir: Path) -> Path:
     and capture the downloaded file. Returns the path to the downloaded file."""
     log(f"Downloading from Fireload: {fireload_url}")
 
+    # Fireload gates downloads behind an INVISIBLE reCAPTCHA v2. A headless browser
+    # scores as a bot and never obtains a token, so the download never starts. We
+    # therefore run HEADED (under Xvfb — the UI launches the downloader via
+    # xvfb-run) with automation fingerprints hidden; on a residential IP the
+    # score-based check passes with no visible challenge, after which JS swaps
+    # #downloadButton's href to the real "?pt=<token>" URL. Navigating the page to
+    # that URL streams the file (the file node's TLS cert is rejected by default,
+    # hence ignore_https_errors).
     with sync_playwright() as pw:
-        browser = pw.chromium.launch(headless=True)
-        context = browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            accept_downloads=True,
-        )
+        browser, context = _launch_stealth(pw)
         page = context.new_page()
 
         try:
@@ -419,34 +445,54 @@ def download_from_fireload(fireload_url: str, dest_dir: Path) -> Path:
             except Exception as e:
                 log(f"Fireload debug dump failed: {e}")
 
-            # Primary path: Fireload renders <a id="downloadButton" href="...rar#">
-            # and JS then swaps that href to the real "?pt=<token>" URL (which 302s
-            # to a srvN.fireload.com/...?download_token=... node serving the file).
-            # Clicking before the swap, or matching a generic "Download" element,
-            # both fail — target #downloadButton and wait for its href to populate.
             try:
                 page.wait_for_selector("a#downloadButton", timeout=30000)
             except PlaywrightTimeout:
                 log("Fireload: #downloadButton never appeared")
-            populated = False
+
+            # A little human-like mouse movement nudges the reCAPTCHA score.
+            for mx, my in [(300, 300), (600, 420), (660, 520)]:
+                try:
+                    page.mouse.move(mx, my, steps=8)
+                    page.wait_for_timeout(200)
+                except Exception:
+                    pass
+
+            # Wait for the invisible reCAPTCHA to pass — the href gains a "?pt=<token>".
+            pt_href = None
             for _ in range(30):
                 href = page.evaluate(
                     "() => { const a = document.querySelector('a#downloadButton');"
-                    " return a ? a.getAttribute('href') : null; }")
-                if href and not href.rstrip().endswith("#"):
-                    populated = True
+                    " return a ? a.href : null; }")
+                if href and "pt=" in href:
+                    pt_href = href
                     break
                 page.wait_for_timeout(1000)
-            log(f"Fireload: download href {'ready' if populated else 'NOT ready (trying anyway)'}")
+            log(f"Fireload: reCAPTCHA/download token {'ready' if pt_href else 'NOT ready (trying click path)'}")
 
             try:
                 page.screenshot(path=str(DATA_DIR / "fireload-debug-after.png"))
             except Exception:
                 pass
 
-            # Plain JS click on #downloadButton — do NOT strip iframes/overlays or
-            # rewrite target: Fireload's download hangs off that DOM/script state,
-            # and removing it (or forcing target=_self) silently kills the download.
+            # Primary path: navigate to the pt URL. The browser (with its CF clearance
+            # cookies) is 302'd to the file node and the response becomes a download.
+            if pt_href:
+                try:
+                    with page.expect_download(timeout=180000) as download_info:
+                        try:
+                            page.goto(pt_href, timeout=180000)
+                        except Exception:
+                            pass  # navigation aborts once the download starts
+                    download = download_info.value
+                    dest = dest_dir / (download.suggested_filename or "download.zip")
+                    download.save_as(str(dest))
+                    log(f"Downloaded via reCAPTCHA token: {dest.name}")
+                    return dest
+                except PlaywrightTimeout:
+                    log("Fireload: pt-navigation did not start a download; falling back")
+
+            # Fallback: legacy JS click on #downloadButton (older layouts / no captcha).
             btn = page.query_selector("a#downloadButton")
             if btn:
                 try:
@@ -587,13 +633,16 @@ def extract_archive(archive_path: Path, dest_dir: Path) -> list[Path]:
     return comic_files
 
 
-def move_comic_files(files: list[Path], series_dir: Path):
-    """Move comic files to the series directory under the upload dir."""
+def move_comic_files(files: list[Path], series_dir: Path, series: str = None):
+    """Move comic files to the series directory under the upload dir. Skips any file
+    already staged there OR already delivered to Komga (so a pack that overlaps
+    volumes we own — e.g. the '17-19' pack when we have 17 — never re-adds them)."""
     series_dir.mkdir(parents=True, exist_ok=True)
+    comics_dir = (COMICS_DIR / series) if series else None
     for f in files:
         dest = series_dir / f.name
-        if dest.exists():
-            log(f"Skipped (already exists): {f.name}")
+        if dest.exists() or (comics_dir is not None and (comics_dir / f.name).exists()):
+            log(f"Skipped (already have): {f.name}")
             continue
         shutil.move(str(f), str(dest))
         log(f"Moved: {f.name} -> {series_dir.name}/")
@@ -1901,6 +1950,8 @@ def main():
     parser.add_argument("--url", required=True, help="Series URL (tomosmanga.com, sushiscan.net, manhwa-latino.com, or mangolibreria.com)")
     parser.add_argument("--series", default="", help="Override series name")
     parser.add_argument("--user", default="Unknown", help="Name of the user who triggered the download")
+    parser.add_argument("--refetch", action="store_true",
+                        help="Ignore volumes already owned and re-download the whole series")
     args = parser.parse_args()
 
     if check_already_running():
@@ -1983,7 +2034,8 @@ def main():
             raise RuntimeError("No ouo.io download links found on the page.")
         log(f"Found {total_count} download link(s)")
 
-        volumes = [{"name": f"Volume {i+1}", "state": "pending"} for i in range(total_count)]
+        volumes = [{"name": l["label"] or f"Volume {i+1}", "state": "pending"}
+                   for i, l in enumerate(ouo_links)]
         downloaded_names = set()   # basenames fetched this run, for mirror dedup
         skipped_count = 0          # duplicate/unsupported mirrors intentionally skipped
 
@@ -2002,12 +2054,31 @@ def main():
             if previously_done:
                 log(f"Retry: skipping {len(previously_done)} already-completed volume(s)")
 
+        # Incremental: skip any link whose volumes we already own (in Komga or the
+        # upload staging dir), so re-running a series only fetches new volumes.
+        # --refetch bypasses this. Links with no parseable volume label are always
+        # attempted (move_comic_files is the safety net against duplicates).
+        if not args.refetch:
+            owned = _owned_volumes(series)
+            if owned:
+                log(f"Already own volume(s): {sorted(owned)}")
+            for i, link in enumerate(ouo_links):
+                if i in previously_done:
+                    continue
+                vols = link["volumes"]
+                if vols and vols <= owned:
+                    previously_done.add(i)
+                    volumes[i]["state"] = "done"
+                    completed_count += 1
+                    log(f"Skip link {i+1} ({link['label']}) — vol(s) {sorted(vols)} already owned")
+
         update_status(total=total_count, completed=completed_count, volumes=volumes)
 
         series_dir = UPLOAD_DIR / series
 
         # Step 3: Sequential download loop
-        for i, ouo_url in enumerate(ouo_links):
+        for i, link in enumerate(ouo_links):
+            ouo_url = link["url"]
             if i in previously_done:
                 log(f"Skipping Volume {i+1}/{total_count} (already downloaded)")
                 continue
@@ -2075,7 +2146,7 @@ def main():
                     raise RuntimeError("No comic files found in archive")
 
                 # Move to upload dir
-                move_comic_files(comic_files, series_dir)
+                move_comic_files(comic_files, series_dir, series)
                 volumes[i]["state"] = "done"
                 completed_count += 1
                 update_status(completed=completed_count, volumes=volumes)

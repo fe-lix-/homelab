@@ -94,17 +94,21 @@ def count_pages(filepath: Path) -> int:
         except zipfile.BadZipFile:
             pass
     elif suffix == ".cbr":
+        proc = subprocess.Popen(
+            ["7z", "l", "-slt", str(filepath)],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
         try:
-            result = subprocess.run(
-                ["7z", "l", "-slt", str(filepath)],
-                capture_output=True, text=True, timeout=30,
-            )
+            stdout, _ = proc.communicate(timeout=30)
             return sum(
-                1 for line in result.stdout.splitlines()
+                1 for line in stdout.splitlines()
                 if line.startswith("Path = ")
                 and Path(line.split(" = ", 1)[1]).suffix.lower() in IMAGE_EXTENSIONS
             )
-        except (subprocess.TimeoutExpired, OSError):
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+        except OSError:
             pass
     # Fallback for PDF or unreadable archives: count as 1 file = ~30 pages
     return 30

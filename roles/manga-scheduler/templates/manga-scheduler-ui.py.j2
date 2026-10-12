@@ -178,10 +178,17 @@ def _rate_for(user: str, rec: dict = None) -> int:
     return TOKENS_PER_DAY_OVERRIDES.get(user, TOKENS_PER_DAY)
 
 
+_JST = datetime.timezone(datetime.timedelta(hours=9))
+
+
+def _today_jst() -> str:
+    return datetime.datetime.now(_JST).date().isoformat()
+
+
 def _apply_accrual(user: str, rec: dict) -> None:
-    """Grant this user's daily rate for each calendar day since last_grant."""
+    """Grant this user's daily rate for each calendar day since last_grant (JST)."""
     rate = _rate_for(user, rec)
-    today = datetime.date.today().isoformat()
+    today = _today_jst()
     last = rec.get("last_grant")
     if last is None:
         rec["balance"] = rec.get("balance", 0) + rate
@@ -218,7 +225,7 @@ def try_spend(user: str) -> tuple[bool, int]:
 def refund(user: str, n: int = 1) -> None:
     """Return tokens to a member (used when a paid delivery fails to start)."""
     with _tokens_locked() as data:
-        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": datetime.date.today().isoformat()})
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": _today_jst()})
         rec["balance"] = rec.get("balance", 0) + n
 
 
@@ -332,6 +339,63 @@ def valid_kids_key(key: str) -> bool:
     return bool(real) and hmac.compare_digest(key, real)
 
 
+# --- Earn endpoint (public magic-link; Emma earns tokens, max 3 per 2 h) ---
+
+EARN_KEY_FILE = DATA_DIR / "earn-key.txt"
+EARN_MAX = 3
+EARN_WINDOW_H = 2
+
+
+def _earn_key() -> str:
+    try:
+        return EARN_KEY_FILE.read_text().strip()
+    except OSError:
+        return ""
+
+
+def valid_earn_key(key: str) -> bool:
+    real = _earn_key()
+    return bool(real) and hmac.compare_digest(key, real)
+
+
+def earn_tokens(user: str, n: int) -> tuple[bool, str, int]:
+    """Grant n tokens (1–3) subject to the 2-hour window cap. Atomic."""
+    n = max(1, min(n, 3))
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cutoff = now - datetime.timedelta(hours=EARN_WINDOW_H)
+    with _tokens_locked() as data:
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": None})
+        _apply_accrual(user, rec)
+        history = [
+            e for e in rec.get("earn_history", [])
+            if datetime.datetime.fromisoformat(e["ts"]) > cutoff
+        ]
+        already = sum(e["n"] for e in history)
+        remaining = EARN_MAX - already
+        if n > remaining:
+            if remaining <= 0:
+                return False, f"Maximum {EARN_MAX} étoiles par {EARN_WINDOW_H} h — reviens plus tard !", rec.get("balance", 0)
+            return False, f"Tu peux encore gagner {remaining} étoile(s) — pas {n}.", rec.get("balance", 0)
+        history.append({"ts": now.isoformat(), "n": n})
+        rec["earn_history"] = history
+        rec["balance"] = rec.get("balance", 0) + n
+        return True, f"+{n} étoile(s) ! Tu en as maintenant {rec['balance']}.", rec["balance"]
+
+
+def _earn_window_status(user: str) -> tuple[int, int]:
+    """Return (already_earned_in_window, remaining_in_window)."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cutoff = now - datetime.timedelta(hours=EARN_WINDOW_H)
+    with _tokens_locked() as data:
+        rec = data["users"].get(user, {})
+        history = [
+            e for e in rec.get("earn_history", [])
+            if datetime.datetime.fromisoformat(e["ts"]) > cutoff
+        ]
+        already = sum(e["n"] for e in history)
+    return already, max(0, EARN_MAX - already)
+
+
 # --- Token grant endpoint (for Home Assistant / QR scan-to-earn) ---
 
 def _grant_key() -> str:
@@ -349,7 +413,7 @@ def valid_grant_key(key: str) -> bool:
 def grant_tokens(user: str, n: int) -> int:
     """Add n tokens to a user (also applies any pending daily accrual). Returns balance."""
     with _tokens_locked() as data:
-        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": datetime.date.today().isoformat()})
+        rec = data["users"].setdefault(user, {"balance": 0, "last_grant": _today_jst()})
         _apply_accrual(user, rec)
         rec["balance"] += n
         return rec["balance"]
@@ -1123,6 +1187,215 @@ def render_kids_confirm(key: str, series: str) -> str:
     )
 
 
+# --- Earn page (public, French, phone-friendly modern CSS) ---
+
+EARN_CSS = """
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 60%, #0f3460 100%);
+  min-height: 100vh;
+  padding: 1.5rem 1rem 3rem;
+}
+.card {
+  background: #fffdf7;
+  border-radius: 24px;
+  max-width: 420px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 2.5rem;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.4);
+}
+h1 {
+  font-size: 2rem;
+  font-weight: 800;
+  text-align: center;
+  color: #7c3aed;
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.01em;
+}
+.balance-box {
+  background: linear-gradient(135deg, #fff0b8, #ffe066);
+  border: 3px solid #f59e0b;
+  border-radius: 18px;
+  padding: 1.1rem 1rem;
+  text-align: center;
+  margin-bottom: 1.1rem;
+  font-size: 1.25rem;
+  color: #7c4a03;
+  font-weight: 600;
+}
+.balance-box .stars { color: #f59e0b; letter-spacing: 3px; font-size: 1.5rem; display: block; margin-top: 0.3rem; }
+.window-badge {
+  display: block;
+  background: #e0e7ff;
+  color: #3730a3;
+  font-size: 0.88rem;
+  font-weight: 600;
+  padding: 0.35rem 0.9rem;
+  border-radius: 99px;
+  margin-bottom: 1rem;
+  text-align: center;
+}
+.msg {
+  border-radius: 14px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+}
+.msg.ok { background: #d6f5d6; color: #14532d; border: 2px solid #16a34a; }
+.msg.err { background: #ffdada; color: #7f1d1d; border: 2px solid #dc2626; }
+.hint { text-align: center; color: #6b7280; font-size: 0.95rem; margin-bottom: 1rem; }
+.btn-grid { display: flex; flex-direction: column; gap: 0.75rem; }
+.earn-btn {
+  display: block;
+  width: 100%;
+  padding: 1.15rem 1rem;
+  border-radius: 18px;
+  border: 3px solid #f59e0b;
+  background: linear-gradient(135deg, #fff0b8, #ffe066);
+  color: #7c4a03;
+  font-size: 1.5rem;
+  font-weight: 800;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(245,158,11,0.25);
+  -webkit-tap-highlight-color: transparent;
+}
+.earn-btn:active { opacity: 0.75; }
+.earn-btn.disabled {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+  color: #9ca3af;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+.full-msg {
+  text-align: center;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #7c4a03;
+  background: #fff0b8;
+  border: 2px solid #f59e0b;
+  border-radius: 14px;
+  padding: 1.1rem;
+  margin-top: 0.5rem;
+}
+.confirm-title { font-size: 1.7rem; font-weight: 800; text-align: center; color: #1a1a1a; margin-bottom: 0.4rem; line-height: 1.25; }
+.confirm-sub { text-align: center; color: #6b7280; font-size: 1rem; margin-bottom: 1.8rem; }
+.yes-btn {
+  display: block;
+  width: 100%;
+  padding: 1.2rem;
+  border-radius: 18px;
+  border: 3px solid #16a34a;
+  background: linear-gradient(135deg, #d6f5d6, #86efac);
+  color: #14532d;
+  font-size: 1.45rem;
+  font-weight: 800;
+  text-align: center;
+  cursor: pointer;
+  margin-bottom: 0.75rem;
+  box-shadow: 0 4px 12px rgba(22,163,74,0.2);
+  -webkit-tap-highlight-color: transparent;
+}
+.yes-btn:active { opacity: 0.75; }
+.no-btn {
+  display: block;
+  width: 100%;
+  padding: 1.1rem;
+  border-radius: 18px;
+  border: 3px solid #dc2626;
+  background: linear-gradient(135deg, #ffdada, #fca5a5);
+  color: #7f1d1d;
+  font-size: 1.25rem;
+  font-weight: 700;
+  text-align: center;
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.no-btn:active { opacity: 0.75; }
+"""
+
+
+def _earn_page(inner: str) -> str:
+    return (
+        "<!DOCTYPE html><html lang='fr'><head><meta charset='UTF-8'>"
+        "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+        "<title>Étoiles d'Emma</title>"
+        "<style>" + EARN_CSS + "</style></head><body>"
+        "<div class='card'>"
+        "<h1>⭐ Étoiles d'Emma</h1>"
+        + inner +
+        "</div></body></html>"
+    )
+
+
+def render_earn(key: str, msg: str = "", error: bool = False) -> str:
+    user = _norm(KIDS_USER)
+    balance = get_balance(user)
+    already, remaining = _earn_window_status(user)
+
+    stars_str = ("★" * balance) if balance <= 10 else f"★ \xd7{balance}"
+    balance_html = (
+        f"<div class='balance-box'>"
+        f"Solde d'Emma : <b>{balance}</b> étoile(s)"
+        f"<span class='stars'>{stars_str}</span>"
+        f"</div>"
+    )
+
+    window_html = ""
+    if already > 0:
+        window_html = (
+            f"<span class='window-badge'>"
+            f"Doné ces {EARN_WINDOW_H} h : {already} / {EARN_MAX}"
+            f"</span>"
+        )
+
+    msg_html = ""
+    if msg:
+        cls = "err" if error else "ok"
+        msg_html = f"<div class='msg {cls}'>{escape(msg)}</div>"
+
+    if remaining <= 0:
+        buttons_html = (
+            f"<div class='full-msg'>Maximum atteint pour ces {EARN_WINDOW_H} h.<br>"
+            f"Revenez plus tard !</div>"
+        )
+    else:
+        cells = []
+        for n in [1, 2, 3]:
+            label = f"+{n} " + ("⭐" * n)
+            if n <= remaining:
+                href = f"/earn-confirm?key={urllib.parse.quote(key)}&n={n}"
+                cells.append(f"<a class='earn-btn' href='{escape(href)}'>{label}</a>")
+            else:
+                cells.append(f"<div class='earn-btn disabled'>{label}</div>")
+        hint = "<p class='hint'>Choisissez combien d'étoiles donner à Emma :</p>"
+        buttons_html = hint + "<div class='btn-grid'>" + "\n".join(cells) + "</div>"
+
+    return _earn_page(balance_html + window_html + msg_html + buttons_html)
+
+
+def render_earn_confirm(key: str, n: int) -> str:
+    user = _norm(KIDS_USER)
+    balance = get_balance(user)
+    safe_key = escape(key)
+    stars = "⭐" * n
+    return _earn_page(
+        f"<div class='confirm-title'>Donner <b>+{n} {stars}</b><br>à Emma ?</div>"
+        f"<div class='confirm-sub'>Elle aura <b>{balance + n}</b> étoiles.</div>"
+        "<form method='post' action='/earn-grant'>"
+        f"<input type='hidden' name='key' value='{safe_key}'>"
+        f"<input type='hidden' name='n' value='{n}'>"
+        "<button class='yes-btn' type='submit'>Oui, donner !</button>"
+        "</form>"
+        f"<a class='no-btn' href='/earn?key={safe_key}'>Annuler</a>"
+    )
+
+
 # --- HTTP Handler ---
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -1178,6 +1451,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_redirect("/kids?key=" + urllib.parse.quote(key))
                 return
             self.send_html(render_kids_confirm(key, series))
+        elif parsed.path == "/earn":
+            key = params.get("key", [""])[0]
+            if not valid_earn_key(key):
+                self.send_html("<h1>Lien incorrect</h1><p>Clé manquante ou incorrecte.</p>", 403)
+                return
+            self.send_html(render_earn(key, msg, err))
+        elif parsed.path == "/earn-confirm":
+            key = params.get("key", [""])[0]
+            if not valid_earn_key(key):
+                self.send_html("<h1>Lien incorrect</h1><p>Clé manquante ou incorrecte.</p>", 403)
+                return
+            try:
+                n = max(1, min(int(params.get("n", ["1"])[0]), 3))
+            except (ValueError, TypeError):
+                n = 1
+            self.send_html(render_earn_confirm(key, n))
         elif parsed.path == "/api/status":
             series_map = discover_series()
             state = load_state()
@@ -1209,6 +1498,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_deliver(params)
         elif self.path == "/kids-deliver":
             self._handle_kids_deliver(params)
+        elif self.path == "/earn-grant":
+            self._handle_earn_grant(params)
         elif self.path == "/grant":
             self._handle_grant(params)
         elif self.path == "/admin-grant":
@@ -1221,6 +1512,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_schedule(params)
         else:
             self.send_html("<h1>404</h1>", 404)
+
+    def _handle_earn_grant(self, params: dict):
+        key = params.get("key", [""])[0]
+        if not valid_earn_key(key):
+            self.send_html("<h1>Lien incorrect</h1><p>Clé manquante ou incorrecte.</p>", 403)
+            return
+        try:
+            n = max(1, min(int(params.get("n", ["1"])[0]), 3))
+        except (ValueError, TypeError):
+            n = 1
+        user = _norm(KIDS_USER)
+        ok, message, _balance = earn_tokens(user, n)
+        q = "/earn?key=" + urllib.parse.quote(key) + "&msg=" + urllib.parse.quote(message)
+        if not ok:
+            q += "&err=1"
+        self.send_redirect(q)
 
     def _handle_deliver(self, params: dict):
         series = params.get("series", [""])[0].strip()
@@ -1353,7 +1660,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         user = self.headers.get("Remote-Name") or self.headers.get("Remote-User") or "Unknown"
-        cmd = [str(DATA_DIR / "venv" / "bin" / "python"), str(DOWNLOADER_SCRIPT), "--url", url, "--user", user]
+        # Wrap in xvfb-run: the Fireload step must run a HEADED browser (its
+        # invisible reCAPTCHA rejects headless), which needs a virtual display.
+        cmd = ["/usr/bin/xvfb-run", "-a",
+               str(DATA_DIR / "venv" / "bin" / "python"), str(DOWNLOADER_SCRIPT),
+               "--url", url, "--user", user]
         if series:
             cmd.extend(["--series", series])
 
