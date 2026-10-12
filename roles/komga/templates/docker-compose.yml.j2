@@ -17,6 +17,7 @@ services:
     user: "{{ komga_uid }}:{{ komga_gid }}"
     networks:
       - komga-net          # shared with komf (metadata fetcher) for API access
+    mem_limit: 1500m
     environment:
       TZ: "{{ timezone }}"
 
