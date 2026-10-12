@@ -1,0 +1,27 @@
+---
+nutrition_mcp_hostname: "nutrition.lab.delval.eu"
+nutrition_mcp_port: 8787
+nutrition_mcp_base_dir: /opt/nutrition-mcp
+nutrition_mcp_image_name: ghcr.io/nutrition-mcp/nutrition-mcp
+nutrition_mcp_garmin_image_name: ghcr.io/nutrition-mcp/garmin-sync
+nutrition_mcp_image_tag: latest
+
+nutrition_mcp_oidc_issuer: "https://auth.{{ base_domain }}"
+nutrition_mcp_oidc_client_id: nutrition-mcp
+nutrition_mcp_oidc_client_secret: ""
+nutrition_mcp_oidc_client_secret_digest: ""
+
+nutrition_mcp_allowed_groups: admin
+nutrition_mcp_allowed_users: ""
+
+nutrition_mcp_sync_token: ""
+
+nutrition_mcp_garmin_backfill_days: 7
+nutrition_mcp_garmin_sync_interval_min: 30
+
+nutrition_mcp_access_token_ttl: 3600
+nutrition_mcp_refresh_token_ttl: 2592000
+nutrition_mcp_ui_session_ttl: 43200
+nutrition_mcp_max_clients: 20
+
+nutrition_mcp_backup_keep_days: 30

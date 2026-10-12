@@ -41,11 +41,13 @@ backup_paths:
   - /opt/paperless/consume
   - /opt/paperless/db-dump.sql
   - /srv/paperless
+  - /opt/frigate/config
   - /opt/pihole/config
   - /opt/minecraft/data
   - /opt/ntfy/config
   - /opt/ntfy/data
   - /opt/vaultwarden/data
+  - /opt/nutrition-mcp/data
   - /opt/screentime
   - /etc/nut
   - /srv/photos

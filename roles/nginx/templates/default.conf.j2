@@ -116,7 +116,7 @@ geo $rate_limit_key {
 }
 limit_req_zone $rate_limit_key zone=public_global:10m rate=60r/s;
 
-# Per-IP connection cap for the internet-facing token endpoint (kobo.delval.eu),
+# Per-IP connection cap for the internet-facing public endpoints (kobo.delval.eu),
 # to blunt slow-loris / connection-exhaustion floods.
 limit_conn_zone $binary_remote_addr zone=public_conn:10m;
 
@@ -124,6 +124,9 @@ limit_conn_zone $binary_remote_addr zone=public_conn:10m;
 # The key is 128-bit (brute-infeasible on its own); this throttle + the
 # nginx-public-auth fail2ban jail are defence-in-depth. LAN-exempt via $rate_limit_key.
 limit_req_zone $rate_limit_key zone=public_auth:10m rate=1r/s;
+
+# Per-IP rate limit for nutrition-mcp (public MCP server called by claude.ai).
+limit_req_zone $binary_remote_addr zone=nutrition_mcp:10m rate=10r/s;
 
 # Redirect all HTTP to HTTPS
 server {
@@ -536,13 +539,45 @@ server {
     server_name photos.{{ base_domain }};
     client_max_body_size 50000M;
     {{ ssl_params() }}
-    {{ local_guard() }}
+    {{ block_dotfile_recon() }}
 
     proxy_read_timeout 600s;
     proxy_send_timeout 600s;
     proxy_connect_timeout 60s;
 
+    error_page 403 /403.html;
+    location = /403.html {
+        internal;
+        root /usr/share/nginx/html;
+    }
+    {{ favicon_location() }}
+
+    # Public: SvelteKit app assets — immutable static files, no connection cap
+    # (HTTP/2 stream count exceeds limit_conn easily on first page load).
+    location ~ ^/_app/ {
+        {{ public_rate_limit() }}
+        proxy_pass http://127.0.0.1:{{ immich_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Public: share pages and shared-link API — interactive, cap connections.
+    location ~ ^/(share|api/shared-links/) {
+        {{ public_rate_limit() }}
+        limit_conn public_conn 20;
+        proxy_pass http://127.0.0.1:{{ immich_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+    }
+
     location = /auth/login {
+        if ($local_access = 0) { return 403; }
         if ($arg_error = "access_denied") {
             return 403;
         }
@@ -554,6 +589,7 @@ server {
     }
 
     location / {
+        if ($local_access = 0) { return 403; }
         proxy_pass http://127.0.0.1:{{ immich_port }};
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -822,10 +858,10 @@ server {
 # Internet-facing so the Kobo syncs and Emma spends tokens away from home. Two
 # path-scoped locations, everything else -> 444 (no login page, UI, or API
 # surface): /kobo/ -> Komga Kobo Sync (auth = long API key in the URL); /kids* ->
-# manga-scheduler Star Shop (auth = secret ?key=). NO local_guard on purpose.
-# Brute-force/DDoS defence: public_rate_limit (60 r/s backstop) + limit_conn +
-# a strict 1 r/s zone on /kids + the nginx-public-auth fail2ban jail (bans IPs
-# racking up 401/403s on either path).
+# manga-scheduler Star Shop; /earn* -> token earn page (auth = secret ?key=).
+# NO local_guard on purpose. Brute-force/DDoS defence: public_rate_limit (60 r/s
+# backstop) + limit_conn + a strict 1 r/s zone on /kids and /earn + the
+# nginx-public-auth fail2ban jail (bans IPs racking up 401/403s).
 server {
     listen {{ nginx_port }} ssl;
     server_name kobo.delval.eu;
@@ -874,7 +910,19 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Everything outside /kobo/ and /kids* is closed on this public host.
+    # Earn-token page for Emma — auth = secret ?key= magic link (128-bit).
+    # Covers /earn, /earn-confirm, /earn-grant (prefix match).
+    location /earn {
+        limit_req zone=public_auth burst=10 nodelay;
+        limit_req_status 429;
+        proxy_pass http://127.0.0.1:{{ manga_scheduler_ui_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # Everything outside /kobo/, /kids* and /earn* is closed on this public host.
     location / {
         return 444;
     }
@@ -1182,5 +1230,74 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+
+server {
+    listen {{ nginx_port }} ssl;
+    server_name frigate.{{ base_domain }};
+    {{ ssl_params() }}
+    {{ local_guard() }}
+    {{ authelia_location() }}
+
+    location / {
+        {{ authelia_auth() }}
+        proxy_pass http://{{ frigate_upstream }}:{{ frigate_port }};
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600;
+    }
+}
+
+# nutrition.lab.delval.eu — public MCP server called by claude.ai.
+# DNS: CNAME → home.delval.eu → WAN IP (overrides *.lab.delval.eu → LAN wildcard).
+# Uses wildcard cert. NO local_guard; NO auth_request.
+# App is its own OAuth 2.1 AS; delegates login to Authelia via OIDC.
+server {
+    listen {{ nginx_port }} ssl;
+    server_name {{ nutrition_mcp_hostname }};
+    {{ ssl_params() }}
+
+    client_max_body_size 1m;
+    access_log /var/log/nginx/nutrition-mcp.access.log;
+
+    location ~ ^/(mcp|authorize|token|register|revoke|oauth/callback|\.well-known/oauth-authorization-server|\.well-known/oauth-protected-resource(/mcp)?)$ {
+        limit_req zone=nutrition_mcp burst=40 nodelay;
+        proxy_pass http://127.0.0.1:{{ nutrition_mcp_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+        proxy_buffering off;
+        proxy_read_timeout 120s;
+    }
+
+    # Web UI (0.2.0+) — OIDC login handled by the app itself, not Authelia auth_request.
+    # Uncomment allow/deny to restrict to LAN while keeping /mcp public.
+    location /ui {
+        # allow 10.0.0.0/8;
+        # deny all;
+        limit_req zone=nutrition_mcp burst=60 nodelay;
+        proxy_pass http://127.0.0.1:{{ nutrition_mcp_port }};
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_set_header Connection "";
+        proxy_read_timeout 60s;
+    }
+
+    location = / {
+        return 302 /ui;
+    }
+
+    location / {
+        return 404;
     }
 }

@@ -74,6 +74,10 @@ uptime_kuma_monitors:
   - name: Paul's Games
     url: "https://{{ paul_domain }}"
     accepted_statuscodes: ["200-299", "403", "404"]
+  - name: Frigate NVR
+    url: "http://host-gateway:{{ frigate_port }}/api/version"
+  - name: Nutrition MCP
+    url: "http://host-gateway:{{ nutrition_mcp_port }}/healthz"
   - name: Restic Backup
     type: push
     push_token: ""

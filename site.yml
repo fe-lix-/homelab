@@ -80,6 +80,8 @@
       tags: kcc-converter
     - role: books-kobo
       tags: books-kobo
+    - role: frigate
+      tags: frigate
     - role: samba-portal
       tags: samba-portal
     - role: ntfy
@@ -90,6 +92,8 @@
       tags: vaultwarden
     - role: screentime
       tags: screentime
+    - role: nutrition-mcp
+      tags: nutrition-mcp
     - role: certbot
       tags: certbot
     - role: nginx

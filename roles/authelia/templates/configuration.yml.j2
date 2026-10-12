@@ -190,6 +190,28 @@ identity_providers:
         authorization_policy: audiobook_policy
         consent_mode: implicit
 
+      - client_id: nutrition-mcp
+        client_name: Nutrition MCP (Claude connector)
+        client_secret: "{{ nutrition_mcp_oidc_client_secret_digest }}"
+        public: false
+        authorization_policy: two_factor
+        require_pkce: true
+        pkce_challenge_method: S256
+        redirect_uris:
+          - "https://{{ nutrition_mcp_hostname }}/oauth/callback"
+          - "https://{{ nutrition_mcp_hostname }}/ui/auth/callback"
+        scopes:
+          - openid
+          - profile
+          - groups
+        response_types:
+          - code
+        grant_types:
+          - authorization_code
+        token_endpoint_auth_method: client_secret_basic
+        userinfo_signed_response_alg: none
+        consent_mode: explicit
+
       - client_id: jellyfin
         client_name: Jellyfin
         client_secret: "$plaintext${{ authelia_jellyfin_oidc_secret }}"
@@ -251,6 +273,12 @@ access_control:
         - "komf.{{ base_domain }}"
       policy: {{ authelia_default_policy }}
       subject:
+        - "group:admin"
+
+    - domain: "frigate.{{ base_domain }}"
+      policy: {{ authelia_default_policy }}
+      subject:
+        - "group:camera"
         - "group:admin"
 
     - domain: "comics.{{ base_domain }}"
