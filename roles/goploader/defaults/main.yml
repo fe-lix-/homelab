@@ -4,3 +4,4 @@ goploader_port: 8888
 goploader_data_dir: /opt/goploader
 goploader_max_upload_size: "2G"
 goploader_max_upload_size_mb: 2048
+goploader_lifetime_days: 30
