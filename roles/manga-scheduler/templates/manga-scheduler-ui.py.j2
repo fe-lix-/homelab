@@ -28,6 +28,9 @@ DOWNLOADER_SCRIPT = DATA_DIR / "manga-downloader.py"
 DOWNLOAD_STATUS_FILE = DATA_DIR / "download-status.json"
 DOWNLOAD_HISTORY_FILE = DATA_DIR / "download-history.json"
 DOWNLOAD_PID_FILE = DATA_DIR / "downloader.pid"
+SOURCES_FILE = DATA_DIR / "series-sources.json"
+NEW_VOLUMES_FILE  = DATA_DIR / "new-volumes.json"
+SERIES_INFO_FILE  = DATA_DIR / "series-info.json"
 TARGET_PAGES = {{ manga_scheduler_target_pages }}
 PORT = {{ manga_scheduler_ui_port }}
 TOKENS_FILE = DATA_DIR / "tokens.json"
@@ -459,6 +462,50 @@ def list_users() -> list[dict]:
     return sorted(result, key=lambda x: x["user"].lower())
 
 
+# --- Series sources ---
+# Maps folder-name → {source_url, display_name?} so we know where to check for
+# new volumes. Edited through the admin Sources tab; keyed by the upload-queue
+# folder name (same identifier used everywhere else in the delivery system).
+
+def load_sources() -> dict:
+    if SOURCES_FILE.exists():
+        try:
+            return json.loads(SOURCES_FILE.read_text())
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+
+def save_source(folder: str, url: str) -> None:
+    sources = load_sources()
+    if url.strip():
+        sources[folder] = {"source_url": url.strip()}
+    elif folder in sources:
+        del sources[folder]
+    SOURCES_FILE.write_text(json.dumps(sources, indent=2, ensure_ascii=False))
+
+
+def delete_source(folder: str) -> None:
+    sources = load_sources()
+    if folder in sources:
+        del sources[folder]
+        SOURCES_FILE.write_text(json.dumps(sources, indent=2, ensure_ascii=False))
+
+
+def _all_series_folders() -> list[str]:
+    """Union of series folder names from /srv/comics and /srv/uploads/mangas, deduplicated."""
+    seen: dict[str, str] = {}
+    # Comics first so its casing wins on duplicates
+    for d in [COMICS_DIR, UPLOAD_DIR]:
+        if d.is_dir():
+            for entry in sorted(d.iterdir()):
+                if entry.is_dir() and not entry.name.startswith('.') and entry.name != 'script.sh':
+                    key = entry.name.lower()
+                    if key not in seen:
+                        seen[key] = entry.name
+    return sorted(seen.values(), key=str.lower)
+
+
 def get_delivery_log(lines: int = 500) -> list[dict]:
     """Return parsed delivery runs from the systemd journal, newest first."""
     try:
@@ -720,13 +767,26 @@ td.actions form { margin: 0; }
 .sched-list input[type=checkbox] { accent-color: #7c3aed; }
 .preview-table td { font-size: 0.82rem; }
 .preview-num { color: #6b7280; font-size: 0.78rem; }
+
+/* Sources */
+.src-form { display: flex; gap: 0.4rem; align-items: center; }
+.src-url-input { flex: 1; min-width: 220px; background: #1a1a2e; color: #e0e0e0; border: 1px solid #2d2d4e; border-radius: 4px; padding: 0.35rem 0.5rem; font-size: 0.82rem; }
+tr.unmatched td { color: #6b7280; }
+tr.unmatched td:first-child { color: #a0aec0; }
+.badge-provider { font-size: 0.72rem; padding: 0.15rem 0.45rem; border-radius: 3px; font-weight: 600; white-space: nowrap; }
+.badge-provider.tomo  { background: #1e3a5f; color: #60a5fa; }
+.badge-provider.sushi { background: #3b2a1f; color: #fb923c; }
+.badge-provider.other { background: #1f2d3b; color: #94a3b8; }
+.badge-provider.none  { color: #374151; }
+.src-stats { font-size: 0.82rem; color: #a0aec0; margin-bottom: 0.75rem; }
+.src-stats strong { color: #a78bfa; }
 """
 
 
 # --- Navigation ---
 
 def _nav(active: str) -> str:
-    tabs = [("Delivery", "/"), ("Download", "/download-page"), ("Schedule", "/schedule")]
+    tabs = [("Delivery", "/"), ("Download", "/download-page"), ("Schedule", "/schedule"), ("Sources", "/sources")]
     html = "<nav class='nav'>"
     for label, href in tabs:
         cls = " class='active'" if label == active else ""
@@ -1078,6 +1138,74 @@ def render_schedule(msg: str = "", error: bool = False) -> str:
     return _page("Schedule", "Schedule", selection + preview_html, msg, error)
 
 
+# --- Sources page (admin) ---
+
+def render_sources(ctx: dict, msg: str = "", error: bool = False) -> str:
+    if not ctx["is_admin"]:
+        return _page("Sources", "Sources",
+                     "<div class='section'><p class='empty'>Admin access required.</p></div>",
+                     "Not authorised", True)
+
+    sources = load_sources()
+    folders = _all_series_folders()
+    matched = sum(1 for f in folders if f in sources)
+
+    rows = []
+    # Unmapped first, then alphabetical within each group
+    unmapped = [f for f in folders if f not in sources]
+    mapped   = [f for f in folders if f in sources]
+
+    for folder in unmapped + mapped:
+        entry = sources.get(folder, {})
+        url = entry.get("source_url", "")
+        safe = escape(folder)
+
+        if "tomosmanga.com" in url:
+            badge = "<span class='badge-provider tomo'>tomo</span>"
+        elif "sushiscan.net" in url:
+            badge = "<span class='badge-provider sushi'>sushi</span>"
+        elif url:
+            badge = "<span class='badge-provider other'>custom</span>"
+        else:
+            badge = "<span class='badge-provider none'>—</span>"
+
+        row_cls = "" if url else " class='unmatched'"
+        rows.append(
+            f"<tr{row_cls}>"
+            f"<td style='white-space:nowrap'>{safe}</td>"
+            f"<td><form class='src-form' method='post' action='/admin-sources-save'>"
+            f"<input type='hidden' name='folder' value='{safe}'>"
+            f"<input type='text' name='url' value='{escape(url)}' class='src-url-input' "
+            f"placeholder='https://tomosmanga.com/...'>"
+            f"<button type='submit'>Save</button>"
+            f"</form></td>"
+            f"<td>{badge}</td>"
+            f"<td><form method='post' action='/admin-sources-delete'>"
+            f"<input type='hidden' name='folder' value='{safe}'>"
+            f"<button type='submit' class='danger' {'disabled' if not url else ''}>Clear</button>"
+            f"</form></td>"
+            f"</tr>"
+        )
+
+    rows_html = "\n".join(rows) if rows else \
+        "<tr><td colspan='4' class='empty'>No series folders found.</td></tr>"
+
+    body = (
+        "<div class='section'>"
+        "<h2>Series Sources</h2>"
+        "<p style='font-size:0.82rem;color:#a0aec0;margin-top:0'>"
+        "Link each series folder to its download source. Unmapped series (shown first) "
+        "cannot be checked for new volumes automatically.</p>"
+        f"<p class='src-stats'><strong>{matched}</strong> of <strong>{len(folders)}</strong> series mapped</p>"
+        "<table><thead><tr>"
+        "<th>Folder</th><th>Source URL</th><th>Provider</th><th></th>"
+        "</tr></thead><tbody>\n"
+        + rows_html +
+        "\n</tbody></table></div>"
+    )
+    return _page("Sources", "Sources", body, msg, error)
+
+
 # --- Kids page rendering (standalone; big tap targets for e-ink, no JS) ---
 
 # Light pastel cards read best on the Kobo's Kaleido color e-ink (the black text
@@ -1102,6 +1230,12 @@ h1 { font-size: 2rem; text-align: center; margin: 0.4rem 0 0.9rem; color: #7c3ae
 .k-msg { font-size: 1.3rem; text-align: center; background: #d6f5d6; border: 3px solid #16a34a; border-radius: 16px; padding: 0.9rem; margin-bottom: 0.9rem; color: #14532d; }
 .k-msg.err { background: #ffdada; border-color: #dc2626; color: #7f1d1d; }
 .k-hint { text-align: center; color: #555; font-size: 1.05rem; margin: 0.2rem 0 1rem; }
+.k-new-banner { font-size: 1.2rem; text-align: center; background: #e0f2fe; border: 3px solid #0284c7; border-radius: 16px; padding: 0.7rem; margin-bottom: 0.8rem; color: #0c4a6e; }
+.k-info-wrap { text-align: center; margin-bottom: 1rem; }
+.k-cover { width: 168px; border-radius: 10px; box-shadow: 0 2px 8px rgba(0,0,0,.25); display: block; margin: 0 auto 0.8rem; }
+.k-synopsis { font-size: 1.64rem; line-height: 1.55; color: #333; padding: 0 1rem; text-align: left; }
+.k-back { display: inline-block; font-size: 1.1rem; background: #e5e7eb; color: #374151; border: none; border-radius: 12px; padding: 0.5rem 1.1rem; text-decoration: none; margin-bottom: 0.8rem; }
+.k-title-info { font-size: 1.35rem; font-weight: 700; margin: 0.2rem 0 0.7rem; }
 /* Float layout, not grid/flex — the Kobo browser (WebKit 538) supports neither. */
 .k-grid { overflow: hidden; }
 .k-grid form { margin: 0; }
@@ -1154,16 +1288,33 @@ def render_kids(key: str, msg: str = "", error: bool = False) -> str:
         style = f"background:{bg};border-color:{bd}"
         label = f"<span class='k-name'>{safe}</span><span class='k-left'>quedan {len(files)}</span>"
         if can:
-            # Tap goes to a confirmation page (no JS confirm() on the Kobo browser).
-            href = "/kids-confirm?key=" + urllib.parse.quote(key) + "&series=" + urllib.parse.quote(name)
+            # Tap goes to the info page first, then confirm.
+            href = "/kids-info?key=" + urllib.parse.quote(key) + "&series=" + urllib.parse.quote(name)
             inner = f"<a class='k-item' href='{escape(href)}' style='{style}'>{label}</a>"
         else:
             inner = f"<div class='k-item k-off' style='{style}'>{label}</div>"
         rows.append(f"<div class='k-cell'>{inner}</div>")
     items = "\n".join(rows) if rows else "<p class='k-empty'>No hay cómics en espera ahora mismo.</p>"
 
+    # New-volumes banner: written by manga-auto-update when it finds new volumes
+    new_banner = ""
+    try:
+        if NEW_VOLUMES_FILE.exists():
+            nv = json.loads(NEW_VOLUMES_FILE.read_text())
+            names = nv.get("series", [])
+            if names:
+                if len(names) == 1:
+                    joined = names[0]
+                elif len(names) == 2:
+                    joined = f"{names[0]} y {names[1]}"
+                else:
+                    joined = ", ".join(names[:-1]) + f" y {names[-1]}"
+                new_banner = f"<div class='k-new-banner'>📦 ¡Hay tomos nuevos de <b>{escape(joined)}</b>!</div>"
+    except Exception:
+        pass
+
     return _kids_page(
-        tokens_line + msg_html
+        tokens_line + msg_html + new_banner
         + "<p class='k-hint'>Toca un cómic para enviarlo a tu Kobo.</p>"
         + "<div class='k-grid'>" + items + "</div>"
     )
@@ -1184,6 +1335,51 @@ def render_kids_confirm(key: str, series: str) -> str:
         "</form>"
         f"<a class='k-no' href='/kids?key={safe_key}'>No, volver</a>"
         "</div>"
+    )
+
+
+def render_kids_info(key: str, series: str) -> str:
+    """Story teaser page shown before the confirm step."""
+    safe_key = escape(key)
+    safe = escape(series)
+    confirm_href = escape("/kids-confirm?key=" + urllib.parse.quote(key) + "&series=" + urllib.parse.quote(series))
+    back_href = escape("/kids?key=" + urllib.parse.quote(key))
+    balance = get_balance(KIDS_USER)
+    can = balance >= 1
+
+    info = {}
+    try:
+        if SERIES_INFO_FILE.exists():
+            all_info = json.loads(SERIES_INFO_FILE.read_text())
+            info = all_info.get(series, {})
+    except Exception:
+        pass
+
+    synopsis = info.get("synopsis", "")
+    image_url = info.get("image_url", "")
+
+    img_html = (f"<img class='k-cover' src='{escape(image_url)}' alt='{safe}' loading='lazy'>"
+                if image_url else "")
+
+    synopsis_html = f"<p class='k-synopsis'>{escape(synopsis)}</p>" if synopsis else ""
+
+    info_block = (
+        f"<div class='k-info-wrap'>{img_html}{synopsis_html}</div>"
+        if (img_html or synopsis_html) else ""
+    )
+
+    if can:
+        action_btn = (
+            f"<a class='k-yes' href='{confirm_href}'>Pedir este cómic (1 ⭐)</a>"
+        )
+    else:
+        action_btn = "<div class='k-cost'>No te quedan estrellas — ¡vuelve mañana!</div>"
+
+    return _kids_page(
+        f"<a class='k-back' href='{back_href}'>← Volver</a>"
+        f"<div class='k-title-info'>{safe}</div>"
+        + info_block
+        + action_btn
     )
 
 
@@ -1441,6 +1637,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_html("<h1>Enlace incorrecto</h1><p>Falta la clave o está mal escrita.</p>", 403)
                 return
             self.send_html(render_kids(key, msg, err))
+        elif parsed.path == "/kids-info":
+            key = params.get("key", [""])[0]
+            if not valid_kids_key(key):
+                self.send_html("<h1>Enlace incorrecto</h1><p>Falta la clave o está mal escrita.</p>", 403)
+                return
+            series = params.get("series", [""])[0].strip()
+            if not series or series not in discover_series():
+                self.send_redirect("/kids?key=" + urllib.parse.quote(key))
+                return
+            self.send_html(render_kids_info(key, series))
         elif parsed.path == "/kids-confirm":
             key = params.get("key", [""])[0]
             if not valid_kids_key(key):
@@ -1467,6 +1673,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 n = 1
             self.send_html(render_earn_confirm(key, n))
+        elif parsed.path == "/sources":
+            self.send_html(render_sources(user_ctx(self.headers), msg, err))
+        elif parsed.path == "/api/sources":
+            self.send_json(load_sources())
         elif parsed.path == "/api/status":
             series_map = discover_series()
             state = load_state()
@@ -1510,6 +1720,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._handle_delete_series(params)
         elif self.path == "/schedule":
             self._handle_schedule(params)
+        elif self.path == "/admin-sources-save":
+            self._handle_sources_save(params)
+        elif self.path == "/admin-sources-delete":
+            self._handle_sources_delete(params)
         else:
             self.send_html("<h1>404</h1>", 404)
 
@@ -1682,6 +1896,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
         active = params.get("active", [])
         save_schedule(active)
         self.send_redirect("/schedule?msg=" + urllib.parse.quote(f"Schedule updated: {len(active)} series selected"))
+
+    def _handle_sources_save(self, params: dict):
+        ctx = user_ctx(self.headers)
+        if not ctx["is_admin"]:
+            self.send_redirect("/sources?msg=" + urllib.parse.quote("Not authorised") + "&err=1")
+            return
+        folder = params.get("folder", [""])[0].strip()
+        url = params.get("url", [""])[0].strip()
+        if not folder:
+            self.send_redirect("/sources?msg=Missing+folder&err=1")
+            return
+        save_source(folder, url)
+        verb = "Saved" if url else "Cleared"
+        self.send_redirect("/sources?msg=" + urllib.parse.quote(f"{verb}: {folder}"))
+
+    def _handle_sources_delete(self, params: dict):
+        ctx = user_ctx(self.headers)
+        if not ctx["is_admin"]:
+            self.send_redirect("/sources?msg=" + urllib.parse.quote("Not authorised") + "&err=1")
+            return
+        folder = params.get("folder", [""])[0].strip()
+        if not folder:
+            self.send_redirect("/sources?msg=Missing+folder&err=1")
+            return
+        delete_source(folder)
+        self.send_redirect("/sources?msg=" + urllib.parse.quote(f"Cleared: {folder}"))
 
 
 if __name__ == "__main__":

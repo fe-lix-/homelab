@@ -141,6 +141,43 @@
     enabled: true
     state: started
 
+# --- Auto-updater ---
+
+- name: Deploy manga-auto-update script
+  ansible.builtin.template:
+    src: manga-auto-update.py.j2
+    dest: "{{ manga_scheduler_data_dir }}/manga-auto-update.py"
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Deploy manga-auto-update systemd service
+  ansible.builtin.template:
+    src: manga-auto-update.service.j2
+    dest: /etc/systemd/system/manga-auto-update.service
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Deploy manga-auto-update systemd timer
+  ansible.builtin.template:
+    src: manga-auto-update.timer.j2
+    dest: /etc/systemd/system/manga-auto-update.timer
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload systemd
+
+- name: Flush handlers
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start manga-auto-update timer
+  ansible.builtin.systemd:
+    name: manga-auto-update.timer
+    enabled: true
+    state: started
+
 # --- Chapter Checker ---
 
 - name: Deploy manga chapter checker script

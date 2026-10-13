@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily manga auto-update check
+Requires=manga-auto-update.service
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=600
+Persistent=true
+
+[Install]
+WantedBy=timers.target

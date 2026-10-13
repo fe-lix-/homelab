@@ -1,0 +1,14 @@
+[Unit]
+Description=Manga auto-update — check tracked series for new volumes and download them
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart={{ manga_scheduler_data_dir }}/venv/bin/python {{ manga_scheduler_data_dir }}/manga-auto-update.py
+WorkingDirectory={{ manga_scheduler_data_dir }}
+Environment=PLAYWRIGHT_BROWSERS_PATH={{ manga_scheduler_data_dir }}/ms-playwright
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=manga-auto-update
+TimeoutStartSec=14400
